@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Checkout — salaksak.art.net</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');
+        body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    </style>
+</head>
+<body class="bg-amber-50/50 text-stone-800 antialiased min-h-screen">
+
+    <header class="bg-white border-b border-orange-100">
+        <div class="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
+            <a href="index.html" class="text-xl font-black tracking-tight bg-gradient-to-r from-rose-600 to-orange-600 bg-clip-text text-transparent">
+                🎨 salaksak<span class="text-stone-900 font-medium">.art.net</span>
+            </a>
+            <a href="index.html" class="text-sm font-bold text-stone-600 hover:text-rose-600">← Back to gallery</a>
+        </div>
+    </header>
+
+    <main class="max-w-4xl mx-auto px-6 py-10">
+        <h1 class="text-3xl font-black tracking-tight mb-6">Checkout</h1>
+
+        <div class="grid md:grid-cols-2 gap-6">
+            <!-- Buyer information -->
+            <form id="checkout-form" class="bg-white rounded-2xl border border-orange-100 shadow-sm p-6 space-y-3">
+                <h2 class="font-black text-lg mb-1">Shipping & Contact</h2>
+
+                <input id="fullName" required placeholder="Full name"
+                       class="w-full border border-stone-300 rounded-xl px-4 py-2.5 text-sm">
+                <input id="email" type="email" required placeholder="Email"
+                       class="w-full border border-stone-300 rounded-xl px-4 py-2.5 text-sm">
+                <input id="contactNumber" required placeholder="Contact number"
+                       class="w-full border border-stone-300 rounded-xl px-4 py-2.5 text-sm">
+                <textarea id="address" required rows="3" placeholder="Full shipping address"
+                          class="w-full border border-stone-300 rounded-xl px-4 py-2.5 text-sm"></textarea>
+                <input id="country" required placeholder="Country"
+                       class="w-full border border-stone-300 rounded-xl px-4 py-2.5 text-sm">
+
+                <select id="paymentMethod"
+                        class="w-full border border-stone-300 rounded-xl px-4 py-2.5 text-sm">
+                    <option value="COD">Cash on Delivery</option>
+                    <option value="Bank Transfer">Bank Transfer</option>
+                    <option value="GCash">GCash</option>
+                </select>
+
+                <button id="place-btn" type="submit"
+                        class="w-full bg-gradient-to-r from-rose-600 to-orange-600 text-white font-black py-3 rounded-xl shadow-md disabled:opacity-50">
+                    Place Order
+                </button>
+
+                <p id="msg" class="text-sm text-rose-600 font-semibold"></p>
+            </form>
+
+            <!-- Order summary -->
+            <div class="bg-white rounded-2xl border border-orange-100 shadow-sm p-6 h-fit">
+                <h2 class="font-black text-lg mb-3">Order Summary</h2>
+                <div id="summary" class="space-y-3 text-sm">
+                    <p class="text-stone-400">Loading...</p>
+                </div>
+
+                <div class="flex justify-between font-black mt-4 pt-4 border-t border-orange-100">
+                    <span>Total</span>
+                    <span id="total">$0.00</span>
+                </div>
+                <p class="text-[11px] text-stone-400 mt-2">Prices are charged in USD.</p>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        function esc(v) {
+            return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
+
+        function img(url) {
+            if (!url) return '';
+            let src = String(url).trim();
+            if (src.includes('\\uploads\\')) src = '/uploads/' + src.split('\\uploads\\').pop();
+            if (src.startsWith('uploads/')) src = '/' + src;
+            if (!src.startsWith('/') && !src.startsWith('http')) src = '/uploads/' + src;
+            return src;
+        }
+
+        async function init() {
+            const sessionRes = await fetch('/api/session');
+            const session = await sessionRes.json();
+
+            if (!session.loggedIn) {
+                location.href = 'login.html?next=' + encodeURIComponent('checkout.html');
+                return;
+            }
+
+            document.getElementById('fullName').value = session.name || '';
+            document.getElementById('email').value = session.email || '';
+
+            const res = await fetch('/api/cart');
+            const items = res.ok ? await res.json() : [];
+            const summary = document.getElementById('summary');
+            let total = 0;
+
+            if (!items.length) {
+                summary.innerHTML = '<p class="text-stone-400">Your cart is empty. <a href="index.html" class="text-rose-600 font-bold">Browse the gallery</a></p>';
+                document.getElementById('place-btn').disabled = true;
+                return;
+            }
+
+            summary.innerHTML = items.map(i => {
+                const line = Number(i.price) * Number(i.quantity);
+                total += line;
+                const src = img(i.image_url);
+                return `<div class="flex items-center gap-3">
+                    <div class="w-12 h-12 rounded-lg overflow-hidden bg-stone-100 shrink-0">
+                        ${src ? `<img src="${esc(src)}" class="w-full h-full object-cover" onerror="this.style.display='none'">` : ''}
+                    </div>
+                    <div class="flex-1">
+                        <b>${esc(i.title)}</b>
+                        <p class="text-xs text-stone-500">${Number(i.quantity)} × $${Number(i.price).toFixed(2)}</p>
+                    </div>
+                    <span class="font-bold">$${line.toFixed(2)}</span>
+                </div>`;
+            }).join('');
+
+            document.getElementById('total').textContent = '$' + total.toFixed(2);
+        }
+
+        document.getElementById('checkout-form').addEventListener('submit', async event => {
+            event.preventDefault();
+
+            const btn = document.getElementById('place-btn');
+            const msg = document.getElementById('msg');
+            msg.textContent = '';
+            btn.disabled = true;
+            btn.textContent = 'Placing order...';
+
+            const body = {};
+            ['fullName', 'email', 'contactNumber', 'address', 'country', 'paymentMethod']
+                .forEach(k => body[k] = document.getElementById(k).value.trim());
+
+            try {
+                const res = await fetch('/api/checkout', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const data = await res.json();
+
+                if (!res.ok || !data.success) throw new Error(data.error || 'Checkout failed.');
+
+                location.href = 'ordersuccess.html?order=' + encodeURIComponent(data.orderId);
+            } catch (err) {
+                msg.textContent = err.message;
+                btn.disabled = false;
+                btn.textContent = 'Place Order';
+            }
+        });
+
+        init();
+    </script>
+</body>
+</html>

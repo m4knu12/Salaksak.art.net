@@ -1,0 +1,28 @@
+{
+  "name": "salaksak.art.net",
+  "version": "1.0.0",
+  "description": "salaksak.art.net — Filipino art marketplace (Node.js, Express, SQLite)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "express": "^4.19.2",
+    "express-session": "^1.18.0",
+    "multer": "^1.4.5-lts.1",
+    "sqlite3": "^5.1.7"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "allowScripts": {
+    "bcrypt@5.1.1": true,
+    "sqlite3@5.1.7": true
+  }
+}

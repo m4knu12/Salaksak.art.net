@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>salaksak.art.net — Joyful Global Filipino Art Marketplace</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');
+        body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    </style>
+</head>
+<body class="bg-amber-50/50 text-stone-800 antialiased selection:bg-rose-500 selection:text-white">
+
+    <!-- Joyful Top Announcement Banner -->
+    <div class="bg-gradient-to-r from-rose-500 via-orange-500 to-amber-500 text-white text-xs font-bold py-2.5 px-4 text-center tracking-wide shadow-inner">
+        ✨ 🇵🇭 Discover & Collect Original Masterpieces from Independent Filipino Creators • Free Worldwide Insured Shipping! 🎨
+    </div>
+
+    <!-- Vibrant Header -->
+    <header class="bg-white/80 backdrop-blur-md border-b border-orange-100 sticky top-0 z-50 shadow-xs transition-all">
+        <div class="max-w-7xl mx-auto px-6 py-4 flex flex-col md:flex-row justify-between items-center gap-4">
+
+            <div class="flex items-center justify-between w-full md:w-auto">
+                <a href="index.html" class="text-2xl font-black tracking-tight bg-gradient-to-r from-rose-600 to-orange-600 bg-clip-text text-transparent flex items-center gap-2">
+                    🎨 salaksak<span class="text-stone-900 font-medium">.art.net</span>
+                </a>
+                <div class="md:hidden flex items-center space-x-1 bg-stone-100 p-1 rounded-full text-xs font-bold">
+                    <button onclick="setCurrency('USD')" id="mob-cur-usd" class="px-3 py-1 rounded-full bg-rose-600 text-white shadow-sm transition">USD ($)</button>
+                    <button onclick="setCurrency('PHP')" id="mob-cur-php" class="px-3 py-1 rounded-full text-stone-600 transition">PHP (₱)</button>
+                </div>
+            </div>
+
+            <!-- Playful Search & Filter Bar -->
+            <div class="flex-1 max-w-xl w-full flex shadow-sm rounded-full overflow-hidden border border-orange-200 bg-white">
+                <input type="text" id="search-input" oninput="filterArtworks()" placeholder="Search vibrant paintings, digital art, sculptures..." class="w-full px-5 py-2.5 focus:outline-none text-sm text-stone-700 bg-transparent">
+                <button class="bg-gradient-to-r from-rose-600 to-orange-600 hover:opacity-90 text-white px-6 font-bold text-sm transition flex items-center gap-1.5">
+                    🔍 Search
+                </button>
+            </div>
+
+            <!-- User Auth & Currency Actions -->
+            <div class="flex items-center space-x-3 w-full md:w-auto justify-end flex-wrap gap-y-2">
+                <div class="hidden md:flex items-center bg-stone-100 p-1 rounded-full text-xs font-bold border border-stone-200">
+                    <button onclick="setCurrency('USD')" id="cur-usd" class="px-3 py-1.5 rounded-full bg-rose-600 text-white shadow-sm transition">USD ($)</button>
+                    <button onclick="setCurrency('PHP')" id="cur-php" class="px-3 py-1.5 rounded-full text-stone-600 hover:text-stone-900 transition">PHP (₱)</button>
+                </div>
+
+                <button onclick="openCart()" class="bg-stone-900 hover:bg-stone-800 text-white px-4 py-2.5 rounded-full font-bold text-xs shadow-md transition-all">🛒 Cart <span id="cart-count" class="ml-1 bg-rose-600 px-1.5 py-0.5 rounded-full">0</span></button>
+
+                <!-- Unread messages indicator (shown after login) -->
+                <a id="msg-link" href="message.html" class="hidden bg-white border border-stone-200 hover:border-rose-300 text-stone-800 px-4 py-2.5 rounded-full font-bold text-xs shadow-sm transition">
+                    💬 Messages <span id="msg-badge" class="hidden ml-1 bg-rose-600 text-white px-1.5 py-0.5 rounded-full">0</span>
+                </a>
+
+                <!-- New order notifications (sellers/admin only) -->
+                <a id="notif-link" href="dashboard.html#notifications-section" class="hidden bg-white border border-stone-200 hover:border-rose-300 text-stone-800 px-4 py-2.5 rounded-full font-bold text-xs shadow-sm transition">
+                    🔔 Orders <span id="notif-badge" class="hidden ml-1 bg-rose-600 text-white px-1.5 py-0.5 rounded-full">0</span>
+                </a>
+
+                <div id="nav-auth" class="flex items-center space-x-2">
+                    <a href="login.html" class="bg-stone-900 hover:bg-stone-800 text-white px-5 py-2.5 rounded-full font-bold text-sm shadow-md hover:shadow-lg transition-all transform hover:-translate-y-0.5">Login / Register</a>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Joyful Category Sub-Navbar -->
+    <nav class="bg-white border-b border-orange-100 shadow-2xs">
+        <div class="max-w-7xl mx-auto px-6 py-3 flex justify-between items-center overflow-x-auto text-sm">
+            <div class="flex space-x-8 whitespace-nowrap font-bold text-stone-600">
+                <button onclick="filterCategory('All')" id="cat-All" class="text-rose-600 border-b-2 border-rose-600 pb-1 transition">✨ All Masterpieces</button>
+                <button onclick="filterCategory('Oil on Canvas')" id="cat-Oil" class="hover:text-rose-600 pb-1 transition">🖼️ Oil Paintings</button>
+                <button onclick="filterCategory('Acrylic')" id="cat-Acrylic" class="hover:text-rose-600 pb-1 transition">🎨 Acrylic</button>
+                <button onclick="filterCategory('Digital Art')" id="cat-Digital" class="hover:text-rose-600 pb-1 transition">💻 Digital Art</button>
+                <button onclick="filterCategory('Sculpture')" id="cat-Sculpture" class="hover:text-rose-600 pb-1 transition">🗿 Sculptures</button>
+            </div>
+            <div id="dashboard-link" class="whitespace-nowrap pl-4"></div>
+        </div>
+    </nav>
+
+    <!-- Joyful Hero Banner -->
+    <section class="relative bg-gradient-to-br from-rose-900 via-teal-900 to-indigo-950 text-white py-20 px-6 text-center overflow-hidden">
+        <div class="absolute inset-0 opacity-15 bg-[radial-gradient(#fff_1px,transparent_1px)] [background-size:16px_16px]"></div>
+        <div class="relative max-w-4xl mx-auto space-y-6">
+            <span class="inline-block bg-white/10 backdrop-blur-md text-amber-300 text-xs font-bold px-4 py-1.5 rounded-full uppercase tracking-widest border border-white/20 shadow-inner">
+                🌟 The Premier Filipino Creator Hub
+            </span>
+            <h1 class="text-4xl md:text-6xl font-black tracking-tight leading-tight">
+                Where Vibrant <span class="bg-gradient-to-r from-amber-400 via-orange-400 to-rose-400 bg-clip-text text-transparent">Filipino Art</span> Meets the World
+            </h1>
+            <p class="max-w-2xl mx-auto text-stone-300 text-base md:text-lg font-medium leading-relaxed">
+                Support independent master painters and digital creators from Luzon, Visayas, and Mindanao. Authenticated art shipped safely to your doorstep.
+            </p>
+            <div class="pt-4">
+                <a href="#catalog" class="inline-block bg-gradient-to-r from-orange-500 to-rose-600 hover:from-orange-600 hover:to-rose-700 text-white font-extrabold px-8 py-4 rounded-full shadow-xl hover:shadow-2xl transition-all transform hover:-translate-y-1">
+                    🚀 Explore Gallery Collection
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Main Catalog Section -->
+    <main id="catalog" class="max-w-7xl mx-auto px-6 py-16">
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4 border-b border-orange-200/60 pb-4">
+            <div>
+                <h2 class="text-3xl font-black text-stone-900 tracking-tight">Featured Gallery Masterpieces</h2>
+                <p class="text-stone-500 text-sm mt-1">Handcrafted with passion by verified independent Filipino artists.</p>
+            </div>
+            <span id="artwork-count" class="text-xs font-extrabold text-rose-600 bg-rose-100/80 px-4 py-2 rounded-full shadow-2xs">Loading items...</span>
+        </div>
+
+        <div id="artworks-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-8">
+            <!-- Dynamically populated -->
+        </div>
+    </main>
+
+    <!-- Vibrant Footer -->
+    <footer class="bg-stone-900 text-stone-400 py-16 mt-20 text-xs border-t border-stone-800">
+        <div class="max-w-7xl mx-auto px-6 grid grid-cols-1 md:grid-cols-3 gap-10 text-center md:text-left">
+            <div class="space-y-3">
+                <h4 class="text-white font-black text-base tracking-wide bg-gradient-to-r from-rose-400 to-orange-400 bg-clip-text text-transparent">salaksak.art.net</h4>
+                <p class="leading-relaxed">Connecting passionate Filipino creators with global art connoisseurs through seamless e-commerce.</p>
+            </div>
+            <div class="space-y-3">
+                <h4 class="text-white font-bold text-sm">Quick Links</h4>
+                <ul class="space-y-2">
+                    <li><a href="index.html" class="hover:text-white transition">Home Marketplace</a></li>
+                    <li><a href="login.html" class="hover:text-white transition">Artist Portal & Creator Studio</a></li>
+                </ul>
+            </div>
+            <div class="space-y-3">
+                <h4 class="text-white font-bold text-sm">Academic Full-Stack Project</h4>
+                <p class="leading-relaxed">Built with Node.js, Express, SQLite database, secure bcrypt password hashing, session management, and full CRUD studio dashboards.</p>
+            </div>
+        </div>
+        <div class="max-w-7xl mx-auto px-6 text-center mt-12 border-t border-stone-800 pt-6 text-stone-500 font-medium">
+            © 2026 salaksak.art.net. Celebrating Filipino Art Worldwide.
+        </div>
+    </footer>
+
+    <!-- Cart Drawer -->
+    <div id="cart-overlay" class="hidden fixed inset-0 bg-black/40 z-[80]" onclick="closeCart()"></div>
+    <aside id="cart-drawer" class="fixed top-0 right-0 z-[90] h-full w-full max-w-md bg-white shadow-2xl translate-x-full transition-transform duration-300 flex flex-col">
+        <div class="p-5 border-b border-orange-100 flex items-center justify-between">
+            <div><h3 class="font-black text-lg">Your Cart</h3><p class="text-[11px] text-stone-500">Saved to your account</p></div>
+            <button onclick="closeCart()" class="text-stone-500 hover:text-stone-900 text-xl">✕</button>
+        </div>
+        <div id="cart-items" class="flex-1 overflow-y-auto p-5 space-y-3"></div>
+        <div class="p-5 border-t border-orange-100">
+            <div class="flex justify-between font-black mb-4"><span>Total</span><span id="cart-total">$0.00</span></div>
+            <a href="cart.html" class="block text-center border border-stone-200 text-stone-700 py-2.5 rounded-xl font-bold text-xs mb-2">View full cart</a>
+            <a href="checkout.html" class="block text-center bg-gradient-to-r from-rose-600 to-orange-600 text-white py-3 rounded-xl font-black text-xs">Proceed to Checkout</a>
+        </div>
+    </aside>
+
+    <!-- Message Modal -->
+    <div id="message-modal" class="hidden fixed inset-0 z-[100] bg-black/50 items-center justify-center p-5">
+        <div class="bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden">
+            <div class="p-5 border-b border-orange-100 flex justify-between">
+                <div><h3 class="font-black text-lg">Message Seller</h3><p id="message-seller-name" class="text-xs text-stone-500"></p></div>
+                <button onclick="closeMessageModal()">✕</button>
+            </div>
+            <div id="message-history" class="h-72 overflow-y-auto p-5 space-y-3 bg-amber-50/50"></div>
+            <form onsubmit="sendMessage(event)" class="p-4 border-t border-orange-100 flex gap-2">
+                <input id="message-text" required maxlength="2000" placeholder="Write a message..." class="flex-1 px-4 py-3 rounded-xl border border-stone-200 text-sm outline-none focus:border-rose-400">
+                <button class="bg-stone-900 text-white px-5 rounded-xl font-bold text-xs">Send</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        let allArtworks = [];
+        let currentCurrency = 'USD';
+        let currentCategoryFilter = 'All';
+        let currentSession = null;
+        let currentSellerId = null;
+        let currentArtworkId = null;
+        let badgeTimer = null;
+        const PHP_CONVERSION_RATE = 56.00;
+
+        /* ---------- unread badges ---------- */
+        function setBadge(id, n) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = n > 99 ? '99+' : n;
+            el.classList.toggle('hidden', !n);
+        }
+
+        async function refreshBadges() {
+            if (!currentSession || !currentSession.loggedIn) return;
+            try {
+                const m = await fetch('/api/messages/unread-count');
+                if (m.ok) setBadge('msg-badge', (await m.json()).count || 0);
+
+                if (currentSession.role === 'seller' || currentSession.role === 'admin') {
+                    const n = await fetch('/api/notifications/unread-count');
+                    if (n.ok) setBadge('notif-badge', (await n.json()).count || 0);
+                }
+            } catch (e) { /* ignore transient network errors */ }
+        }
+
+        function startBadgePolling() {
+            document.getElementById('msg-link').classList.remove('hidden');
+            if (currentSession.role === 'seller' || currentSession.role === 'admin') {
+                document.getElementById('notif-link').classList.remove('hidden');
+            }
+            refreshBadges();
+            if (badgeTimer) clearInterval(badgeTimer);
+            badgeTimer = setInterval(refreshBadges, 15000);
+        }
+
+        /* ---------- init ---------- */
+        async function initApp() {
+            try {
+                const sessionRes = await fetch('/api/session');
+                const session = await sessionRes.json();
+                currentSession = session;
+                const navAuth = document.getElementById('nav-auth');
+                const dashLink = document.getElementById('dashboard-link');
+
+                if (session.loggedIn) {
+                    navAuth.innerHTML = `
+                        <div class="text-right hidden sm:block">
+                            <span class="block text-xs font-bold text-stone-700">Hello, ${escapeHtml(session.name)}</span>
+                            <span class="block text-[10px] bg-gradient-to-r from-rose-500 to-orange-500 text-white px-2 py-0.5 rounded-full font-black uppercase tracking-wider shadow-2xs">${escapeHtml(session.role)}</span>
+                        </div>
+                        <button onclick="logout()" class="bg-stone-200 hover:bg-stone-300 text-stone-800 px-4 py-2 rounded-full text-xs font-bold transition">Logout</button>
+                    `;
+                    if (session.role === 'seller' || session.role === 'admin') {
+                        dashLink.innerHTML = `<a href="dashboard.html" class="bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white px-5 py-2.5 rounded-full font-bold shadow-md hover:shadow-lg transition-all flex items-center gap-1.5 text-xs">🎨 Artist Studio (CRUD)</a>`;
+                    }
+                    startBadgePolling();
+                }
+            } catch (err) {
+                console.error("Session check failed:", err);
+            }
+
+            try {
+                const res = await fetch('/api/artworks');
+                allArtworks = await res.json();
+                renderArtworks(allArtworks);
+                await refreshCartCount();
+            } catch (err) {
+                document.getElementById('artworks-grid').innerHTML = `<p class="col-span-full text-center text-rose-600 py-12 font-bold bg-white rounded-3xl shadow-sm">Could not connect to database backend.</p>`;
+            }
+        }
+
+        function formatPrice(priceInUSD) {
+            if (currentCurrency === 'PHP') {
+                const phpValue = priceInUSD * PHP_CONVERSION_RATE;
+                return '₱' + phpValue.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            }
+            return '$' + priceInUSD.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        function setCurrency(currency) {
+            currentCurrency = currency;
+            document.getElementById('cur-usd').className = currency === 'USD' ? 'px-3 py-1.5 rounded-full bg-rose-600 text-white shadow-sm transition font-bold' : 'px-3 py-1.5 rounded-full text-stone-600 hover:text-stone-900 transition font-bold';
+            document.getElementById('cur-php').className = currency === 'PHP' ? 'px-3 py-1.5 rounded-full bg-rose-600 text-white shadow-sm transition font-bold' : 'px-3 py-1.5 rounded-full text-stone-600 hover:text-stone-900 transition font-bold';
+            document.getElementById('mob-cur-usd').className = currency === 'USD' ? 'px-3 py-1 rounded-full bg-rose-600 text-white shadow-sm transition font-bold' : 'px-3 py-1 rounded-full text-stone-600 transition font-bold';
+            document.getElementById('mob-cur-php').className = currency === 'PHP' ? 'px-3 py-1 rounded-full bg-rose-600 text-white shadow-sm transition font-bold' : 'px-3 py-1 rounded-full text-stone-600 transition font-bold';
+            renderArtworks(filterAndSearch());
+        }
+
+        function filterCategory(category) {
+            currentCategoryFilter = category;
+            renderArtworks(filterAndSearch());
+        }
+
+        function filterArtworks() {
+            renderArtworks(filterAndSearch());
+        }
+
+        function filterAndSearch() {
+            const query = document.getElementById('search-input').value.toLowerCase();
+            return allArtworks.filter(art => {
+                const medium = String(art.medium || '').toLowerCase();
+                const title = String(art.title || '').toLowerCase();
+                const artist = String(art.artist || '').toLowerCase();
+                const matchesCategory = currentCategoryFilter === 'All' || medium.includes(currentCategoryFilter.toLowerCase());
+                const matchesSearch = title.includes(query) || artist.includes(query) || medium.includes(query);
+                return matchesCategory && matchesSearch;
+            });
+        }
+
+        function normalizeImageUrl(imageUrl) {
+            if (!imageUrl) return '';
+            let src = String(imageUrl).trim();
+            if (src.includes('\\uploads\\')) src = '/uploads/' + src.split('\\uploads\\').pop();
+            if (src.startsWith('uploads/')) src = '/' + src;
+            if (!src.startsWith('/') && !src.startsWith('http://') && !src.startsWith('https://')) src = '/uploads/' + src;
+            return src;
+        }
+
+        function imageMarkup(art) {
+            const src = normalizeImageUrl(art.image_url);
+            if (!src) return `<div class="w-full h-full flex items-center justify-center bg-stone-100"><span class="text-4xl">🎨</span></div>`;
+            return `<img src="${src}" alt="${escapeHtml(art.title)}" class="w-full h-full object-cover group-hover:scale-110 transition duration-700 ease-out" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';"><div style="display:none" class="absolute inset-0 items-center justify-center bg-stone-100"><span class="text-4xl">🎨</span></div>`;
+        }
+
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+        }
+
+        function renderArtworks(artworks) {
+            const grid = document.getElementById('artworks-grid');
+            document.getElementById('artwork-count').innerText = `✨ ${artworks.length} Masterpieces Found`;
+
+            if (artworks.length === 0) {
+                grid.innerHTML = `<div class="col-span-full text-center py-20 bg-white rounded-3xl border border-orange-100 shadow-sm"><p class="text-stone-500 font-bold text-base">No artworks found matching your joyful criteria.</p></div>`;
+                return;
+            }
+
+            const myId = currentSession && currentSession.loggedIn ? Number(currentSession.userId) : null;
+
+            grid.innerHTML = artworks.map(art => {
+                const stock = Number(art.stock ?? 1);
+                const soldOut = stock <= 0;
+                const seller = escapeHtml(art.store_name || art.seller_name || art.artist || 'Artist');
+                const isMine = myId !== null && Number(art.user_id) === myId;
+                const noSeller = !Number(art.user_id);
+
+                const messageBtn = (isMine || noSeller) ? '' : `
+                            <button onclick="openMessage(${Number(art.user_id)}, ${Number(art.id)}, '${seller.replace(/'/g, "\\'")}')" class="w-full mt-2 border border-stone-200 hover:border-rose-300 hover:text-rose-600 text-stone-700 px-3 py-2.5 rounded-xl text-xs font-extrabold transition">💬 Message Seller</button>`;
+
+                return `
+                <div class="bg-white rounded-3xl shadow-xs hover:shadow-2xl transition-all duration-300 overflow-hidden border border-orange-100/80 flex flex-col justify-between group transform hover:-translate-y-1.5">
+                    <div class="relative overflow-hidden bg-stone-100 h-64">
+                        ${imageMarkup(art)}
+                        <span class="absolute top-3 left-3 bg-stone-900/80 backdrop-blur-md text-amber-300 text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-wider shadow-md">🇵🇭 Verified Art</span>
+                        ${soldOut ? `<span class="absolute top-3 right-3 bg-rose-600 text-white text-[10px] font-black px-3 py-1 rounded-full">SOLD OUT</span>` : ''}
+                    </div>
+                    <div class="p-6 flex-1 flex flex-col justify-between space-y-4">
+                        <div>
+                            <h3 class="font-black text-lg text-stone-900 mb-1 group-hover:text-rose-600 transition line-clamp-1">${escapeHtml(art.title)}</h3>
+                            <p class="text-stone-600 text-xs font-bold mb-1">Artist: ${escapeHtml(art.artist)}</p>
+                            <p class="text-stone-400 text-[10px] font-bold mb-2">${seller}</p>
+                            <span class="inline-block bg-orange-50 text-orange-700 text-[11px] font-bold px-2.5 py-0.5 rounded-md border border-orange-200/50">${escapeHtml(art.medium)}</span>
+                        </div>
+                        <div class="pt-4 border-t border-orange-50">
+                            <div class="flex items-center justify-between mb-3">
+                                <div>
+                                    <span class="block text-[10px] text-stone-400 uppercase font-extrabold">Price</span>
+                                    <span class="text-rose-600 font-black text-xl tracking-tight">${formatPrice(Number(art.price) || 0)}</span>
+                                </div>
+                                <span class="text-[10px] font-bold ${stock <= 2 ? 'text-rose-600' : 'text-stone-400'}">${soldOut ? 'Out of stock' : `${stock} left`}</span>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2">
+                                <button ${soldOut ? 'disabled' : ''} onclick="addToCart(${Number(art.id)})" class="${soldOut ? 'bg-stone-200 text-stone-400' : 'bg-stone-900 hover:bg-gradient-to-r hover:from-rose-600 hover:to-orange-600 text-white'} px-3 py-2.5 rounded-xl text-xs font-extrabold transition shadow-md">🛒 Add to Cart</button>
+                                <button ${soldOut ? 'disabled' : ''} onclick="buyNow(${Number(art.id)})" class="${soldOut ? 'bg-stone-100 text-stone-400' : 'bg-rose-600 hover:bg-orange-600 text-white'} px-3 py-2.5 rounded-xl text-xs font-extrabold transition shadow-md">Buy Now</button>
+                            </div>
+                            ${messageBtn}
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        async function requireLogin() {
+            if (currentSession && currentSession.loggedIn) return true;
+            window.location.href = 'login.html?next=' + encodeURIComponent('index.html');
+            return false;
+        }
+
+        async function addToCart(id) {
+            if (!await requireLogin()) return;
+            const res = await fetch('/api/cart', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({artworkId:id, quantity:1})});
+            const data = await res.json();
+            if (!res.ok) return alert(data.error || 'Could not add to cart.');
+            await refreshCartCount();
+            alert('✨ Artwork added to your cart!');
+        }
+
+        /*
+         * Buy Now: if the item is already in the cart at the maximum stock,
+         * the server rejects another "add". That must not block checkout,
+         * so we only stop when the item is genuinely not in the cart.
+         */
+        async function buyNow(id) {
+            if (!await requireLogin()) return;
+            const res = await fetch('/api/cart', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({artworkId:id, quantity:1})});
+
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                const cartRes = await fetch('/api/cart');
+                const items = cartRes.ok ? await cartRes.json() : [];
+                const alreadyInCart = items.some(x => Number(x.artwork_id) === Number(id));
+                if (!alreadyInCart) return alert(data.error || 'Could not add to cart.');
+            }
+
+            window.location.href = 'checkout.html';
+        }
+
+        async function refreshCartCount() {
+            const count = document.getElementById('cart-count');
+            if (!currentSession || !currentSession.loggedIn) { count.textContent = '0'; return; }
+            const res = await fetch('/api/cart');
+            if (!res.ok) return;
+            const items = await res.json();
+            count.textContent = items.reduce((sum, x) => sum + Number(x.quantity || 0), 0);
+        }
+
+        async function openCart() {
+            if (!await requireLogin()) return;
+            document.getElementById('cart-overlay').classList.remove('hidden');
+            document.getElementById('cart-drawer').classList.remove('translate-x-full');
+            await loadCart();
+        }
+
+        function closeCart() {
+            document.getElementById('cart-overlay').classList.add('hidden');
+            document.getElementById('cart-drawer').classList.add('translate-x-full');
+        }
+
+        async function loadCart() {
+            const box = document.getElementById('cart-items');
+            const res = await fetch('/api/cart');
+            if (!res.ok) { box.innerHTML = '<p class="text-sm text-rose-600">Please sign in.</p>'; return; }
+            const items = await res.json();
+            let total = 0;
+            if (!items.length) {
+                box.innerHTML = '<p class="text-center text-stone-400 text-sm py-12">Your cart is empty.</p>';
+                document.getElementById('cart-total').textContent = formatPrice(0);
+                return;
+            }
+            box.innerHTML = items.map(item => {
+                total += Number(item.price) * Number(item.quantity);
+                const img = normalizeImageUrl(item.image_url);
+                return `<div class="flex gap-3 border border-orange-100 rounded-2xl p-3"><div class="w-16 h-16 rounded-xl overflow-hidden bg-stone-100 shrink-0">${img ? `<img src="${img}" class="w-full h-full object-cover" onerror="this.style.display='none'">` : '<div class="w-full h-full flex items-center justify-center">🎨</div>'}</div><div class="flex-1"><b class="text-sm">${escapeHtml(item.title)}</b><p class="text-xs text-stone-500">${formatPrice(Number(item.price))} each</p><div class="flex items-center gap-2 mt-2"><button onclick="changeCart(${item.id},${Number(item.quantity)-1})" class="w-7 h-7 rounded-lg bg-stone-100">−</button><span class="text-xs font-bold">${item.quantity}</span><button onclick="changeCart(${item.id},${Number(item.quantity)+1})" class="w-7 h-7 rounded-lg bg-stone-100">+</button><button onclick="removeCart(${item.id})" class="ml-auto text-xs text-rose-600 font-bold">Remove</button></div></div></div>`;
+            }).join('');
+            document.getElementById('cart-total').textContent = formatPrice(total);
+        }
+
+        async function changeCart(id, quantity) {
+            if (quantity < 1) return removeCart(id);
+            const res = await fetch('/api/cart/' + id, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({quantity})});
+            const data = await res.json();
+            if (!res.ok) alert(data.error || 'Could not update cart.');
+            await loadCart(); await refreshCartCount();
+        }
+
+        async function removeCart(id) {
+            await fetch('/api/cart/' + id, {method:'DELETE'});
+            await loadCart(); await refreshCartCount();
+        }
+
+        function openMessage(sellerId, artworkId, sellerName) {
+            if (!currentSession || !currentSession.loggedIn) { window.location.href='login.html?next=index.html'; return; }
+            if (!sellerId) return alert('Seller information is unavailable.');
+            if (Number(sellerId) === Number(currentSession.userId)) return alert('This is your own artwork.');
+            currentSellerId = sellerId; currentArtworkId = artworkId;
+            document.getElementById('message-seller-name').textContent = 'Conversation with ' + sellerName;
+            document.getElementById('message-modal').classList.remove('hidden');
+            document.getElementById('message-modal').classList.add('flex');
+            loadMessages();
+        }
+
+        function closeMessageModal() {
+            document.getElementById('message-modal').classList.add('hidden');
+            document.getElementById('message-modal').classList.remove('flex');
+        }
+
+        async function loadMessages() {
+            const box = document.getElementById('message-history');
+            const res = await fetch('/api/messages/' + currentSellerId);
+            const rows = await res.json();
+            if (!Array.isArray(rows)) { box.innerHTML='<p class="text-center text-rose-600 text-xs">Could not load messages.</p>'; return; }
+            box.innerHTML = rows.length ? rows.map(m => `<div class="${m.sender_id === currentSession.userId ? 'text-right' : ''}"><span class="inline-block max-w-[85%] px-3 py-2 rounded-2xl text-xs ${m.sender_id === currentSession.userId ? 'bg-stone-900 text-white' : 'bg-white border border-orange-100'}">${escapeHtml(m.message)}</span></div>`).join('') : '<p class="text-center text-stone-400 text-xs py-20">No messages yet. Say hello!</p>';
+            box.scrollTop = box.scrollHeight;
+            refreshBadges();
+        }
+
+        async function sendMessage(event) {
+            event.preventDefault();
+            const input = document.getElementById('message-text');
+            const message = input.value.trim();
+            if (!message) return;
+            const res = await fetch('/api/messages', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({receiverId:currentSellerId, artworkId:currentArtworkId, message})});
+            const data = await res.json();
+            if (!res.ok) return alert(data.error || 'Could not send message.');
+            input.value = '';
+            await loadMessages();
+        }
+
+        async function logout() {
+            await fetch('/api/logout', { method: 'POST' });
+            window.location.reload();
+        }
+
+        initApp();
+    </script>
+</body>
+</html>

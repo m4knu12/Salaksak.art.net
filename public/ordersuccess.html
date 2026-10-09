@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Order Placed — salaksak.art.net</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');
+        body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    </style>
+</head>
+<body class="bg-amber-50/50 text-stone-800 antialiased min-h-screen">
+
+    <header class="bg-white border-b border-orange-100">
+        <div class="max-w-5xl mx-auto px-6 py-4">
+            <a href="index.html" class="text-xl font-black tracking-tight bg-gradient-to-r from-rose-600 to-orange-600 bg-clip-text text-transparent">
+                🎨 salaksak<span class="text-stone-900 font-medium">.art.net</span>
+            </a>
+        </div>
+    </header>
+
+    <main class="max-w-xl mx-auto px-6 py-16">
+        <div class="bg-white rounded-3xl border border-orange-100 shadow-xl p-10 text-center">
+            <div class="text-6xl mb-3">🎉</div>
+            <h1 class="text-3xl font-black tracking-tight">Order placed!</h1>
+            <p id="order-line" class="mt-2 text-stone-600 font-semibold"></p>
+            <p class="mt-4 text-sm text-stone-500 leading-relaxed">
+                The artist has been notified and will prepare your artwork for shipping.
+                You can message the artist from the artwork page if you have any questions about delivery or payment.
+            </p>
+
+            <div class="mt-8 flex flex-col sm:flex-row gap-3 justify-center">
+                <a href="index.html" class="bg-gradient-to-r from-rose-600 to-orange-600 text-white font-black px-6 py-3 rounded-xl shadow-md">Continue browsing</a>
+                <a href="message.html" class="border border-stone-300 font-bold px-6 py-3 rounded-xl hover:border-rose-300">💬 My messages</a>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const id = Number(new URLSearchParams(location.search).get('order'));
+        document.getElementById('order-line').textContent =
+            Number.isInteger(id) && id > 0 ? 'Your order number is #' + id : 'Thank you for your purchase.';
+
+        // Require a signed-in user so this page is not a public dead end.
+        fetch('/api/session', { credentials: 'same-origin' })
+            .then(r => r.json())
+            .then(s => { if (!s.loggedIn) location.href = 'login.html'; })
+            .catch(() => {});
+    </script>
+</body>
+</html>

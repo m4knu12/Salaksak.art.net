@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Your Cart — salaksak.art.net</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');
+        body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    </style>
+</head>
+<body class="bg-amber-50/50 text-stone-800 antialiased min-h-screen">
+
+    <header class="bg-white border-b border-orange-100">
+        <div class="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
+            <a href="index.html" class="text-xl font-black tracking-tight bg-gradient-to-r from-rose-600 to-orange-600 bg-clip-text text-transparent">
+                🎨 salaksak<span class="text-stone-900 font-medium">.art.net</span>
+            </a>
+            <div class="flex items-center gap-4">
+                <div class="flex items-center bg-stone-100 p-1 rounded-full text-xs font-bold border border-stone-200">
+                    <button id="cur-usd" type="button" class="px-3 py-1.5 rounded-full bg-rose-600 text-white">USD ($)</button>
+                    <button id="cur-php" type="button" class="px-3 py-1.5 rounded-full text-stone-600">PHP (₱)</button>
+                </div>
+                <a href="index.html" class="text-sm font-bold text-stone-600 hover:text-rose-600">← Keep browsing</a>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-5xl mx-auto px-6 py-10">
+        <h1 class="text-3xl font-black tracking-tight mb-6">Your Cart</h1>
+
+        <div class="grid lg:grid-cols-3 gap-6">
+            <div id="items" class="lg:col-span-2 space-y-3">
+                <p class="text-stone-400 text-sm">Loading...</p>
+            </div>
+
+            <aside class="bg-white rounded-2xl border border-orange-100 shadow-sm p-6 h-fit">
+                <h2 class="font-black text-lg mb-3">Summary</h2>
+                <div class="flex justify-between text-sm mb-1"><span>Items</span><span id="count">0</span></div>
+                <div class="flex justify-between text-sm mb-1"><span>Shipping</span><span class="text-emerald-600 font-bold">Free</span></div>
+                <div class="flex justify-between font-black mt-3 pt-3 border-t border-orange-100"><span>Total</span><span id="total">$0.00</span></div>
+                <a id="checkout-btn" href="checkout.html"
+                   class="block text-center mt-5 bg-gradient-to-r from-rose-600 to-orange-600 text-white font-black py-3 rounded-xl shadow-md">Proceed to Checkout</a>
+                <p class="text-[11px] text-stone-400 mt-2">Orders are charged in USD. PHP is shown for reference.</p>
+            </aside>
+        </div>
+    </main>
+
+    <script>
+        const PHP_RATE = 56.0;
+        let currency = 'USD';
+        let cart = [];
+
+        const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+        function price(usd) {
+            return currency === 'PHP'
+                ? '₱' + (usd * PHP_RATE).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                : '$' + usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        function imgSrc(url) {
+            if (!url) return '';
+            let s = String(url).trim();
+            if (s.includes('\\uploads\\')) s = '/uploads/' + s.split('\\uploads\\').pop();
+            if (s.startsWith('uploads/')) s = '/' + s;
+            if (!s.startsWith('/') && !s.startsWith('http')) s = '/uploads/' + s;
+            return s;
+        }
+
+        function setCurrency(c) {
+            currency = c;
+            document.getElementById('cur-usd').className = 'px-3 py-1.5 rounded-full ' + (c === 'USD' ? 'bg-rose-600 text-white' : 'text-stone-600');
+            document.getElementById('cur-php').className = 'px-3 py-1.5 rounded-full ' + (c === 'PHP' ? 'bg-rose-600 text-white' : 'text-stone-600');
+            render();
+        }
+        document.getElementById('cur-usd').onclick = () => setCurrency('USD');
+        document.getElementById('cur-php').onclick = () => setCurrency('PHP');
+
+        function render() {
+            const box = document.getElementById('items');
+            const checkout = document.getElementById('checkout-btn');
+            let total = 0, count = 0;
+
+            if (!cart.length) {
+                box.innerHTML = `<div class="bg-white rounded-2xl border border-orange-100 p-12 text-center">
+                    <p class="text-4xl mb-2">🛒</p>
+                    <p class="font-bold text-stone-500">Your cart is empty.</p>
+                    <a href="index.html" class="inline-block mt-4 text-rose-600 font-bold text-sm">Explore the gallery →</a></div>`;
+                checkout.classList.add('pointer-events-none', 'opacity-50');
+                document.getElementById('count').textContent = '0';
+                document.getElementById('total').textContent = price(0);
+                return;
+            }
+            checkout.classList.remove('pointer-events-none', 'opacity-50');
+
+            box.innerHTML = cart.map(i => {
+                const q = Number(i.quantity), p = Number(i.price);
+                total += p * q; count += q;
+                const src = imgSrc(i.image_url);
+                const low = Number(i.stock) < q;
+                return `<div class="bg-white rounded-2xl border border-orange-100 shadow-sm p-4 flex gap-4">
+                    <div class="w-24 h-24 rounded-xl overflow-hidden bg-stone-100 shrink-0">
+                        ${src ? `<img src="${esc(src)}" class="w-full h-full object-cover" onerror="this.style.display='none'">` : '<div class="w-full h-full flex items-center justify-center text-2xl">🎨</div>'}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <h3 class="font-black truncate">${esc(i.title)}</h3>
+                        <p class="text-xs text-stone-500">by ${esc(i.artist)} · ${esc(i.store_name)}</p>
+                        <p class="text-rose-600 font-black mt-1">${price(p)}</p>
+                        ${low ? `<p class="text-xs text-rose-600 font-bold mt-1">Only ${Number(i.stock)} left — please lower the quantity.</p>` : ''}
+                        <div class="flex items-center gap-2 mt-3">
+                            <button data-act="dec" data-id="${i.id}" data-qty="${q}" class="w-8 h-8 rounded-lg bg-stone-100 font-bold">−</button>
+                            <span class="w-8 text-center text-sm font-bold">${q}</span>
+                            <button data-act="inc" data-id="${i.id}" data-qty="${q}" class="w-8 h-8 rounded-lg bg-stone-100 font-bold">+</button>
+                            <button data-act="rm" data-id="${i.id}" class="ml-auto text-xs font-bold text-rose-600 hover:underline">Remove</button>
+                        </div>
+                    </div>
+                    <div class="font-black text-sm self-start">${price(p * q)}</div>
+                </div>`;
+            }).join('');
+
+            document.getElementById('count').textContent = count;
+            document.getElementById('total').textContent = price(total);
+        }
+
+        async function load() {
+            const s = await (await fetch('/api/session', { credentials: 'same-origin' })).json();
+            if (!s.loggedIn) { location.href = 'login.html?next=cart.html'; return; }
+            const res = await fetch('/api/cart', { credentials: 'same-origin' });
+            cart = res.ok ? await res.json() : [];
+            render();
+        }
+
+        document.getElementById('items').addEventListener('click', async e => {
+            const b = e.target.closest('button[data-act]');
+            if (!b) return;
+            const id = b.dataset.id, q = Number(b.dataset.qty);
+
+            if (b.dataset.act === 'rm' || (b.dataset.act === 'dec' && q <= 1)) {
+                await fetch('/api/cart/' + id, { method: 'DELETE', credentials: 'same-origin' });
+            } else {
+                const next = b.dataset.act === 'inc' ? q + 1 : q - 1;
+                const res = await fetch('/api/cart/' + id, {
+                    method: 'PATCH',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ quantity: next })
+                });
+                if (!res.ok) {
+                    const d = await res.json().catch(() => ({}));
+                    alert(d.error || 'Could not update cart.');
+                }
+            }
+            load();
+        });
+
+        load();
+    </script>
+</body>
+</html>

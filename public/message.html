@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Messages — salaksak.art.net</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');
+        body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    </style>
+</head>
+<body class="bg-amber-50/50 text-stone-800 antialiased min-h-screen">
+
+    <header class="bg-white border-b border-orange-100">
+        <div class="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
+            <a href="index.html" class="text-xl font-black tracking-tight bg-gradient-to-r from-rose-600 to-orange-600 bg-clip-text text-transparent">
+                🎨 salaksak<span class="text-stone-900 font-medium">.art.net</span>
+            </a>
+            <div class="flex items-center gap-4 text-sm font-bold text-stone-600">
+                <a id="dash-link" href="dashboard.html" class="hidden hover:text-rose-600">Artist Studio</a>
+                <a href="index.html" class="hover:text-rose-600">← Gallery</a>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-5xl mx-auto px-6 py-10">
+        <h1 class="text-3xl font-black tracking-tight mb-6">
+            💬 Messages
+            <span id="msg-badge" class="hidden align-middle ml-2 bg-rose-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">0</span>
+        </h1>
+
+        <div class="bg-white rounded-3xl border border-orange-100 shadow-sm overflow-hidden grid md:grid-cols-3 min-h-[28rem]">
+            <!-- Contacts -->
+            <div id="contacts" class="md:border-r border-orange-100 p-4 space-y-2 bg-amber-50/40">
+                <p class="text-sm text-stone-400">Loading...</p>
+            </div>
+
+            <!-- Conversation -->
+            <div class="md:col-span-2 flex flex-col">
+                <div id="chat-title" class="px-5 py-4 border-b border-orange-100 font-bold text-sm text-stone-700">
+                    Select a conversation
+                </div>
+                <div id="history" class="flex-1 overflow-y-auto p-5 space-y-2 bg-amber-50/30 h-80"></div>
+                <form id="chat-form" class="hidden p-4 border-t border-orange-100 flex gap-2">
+                    <input id="chat-text" required maxlength="2000" placeholder="Write a message..."
+                           class="flex-1 px-4 py-3 rounded-xl border border-stone-200 text-sm outline-none focus:border-rose-400">
+                    <button class="bg-stone-900 text-white px-5 rounded-xl font-bold text-xs">Send</button>
+                </form>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        let me = null;
+        let chatWith = null;
+        let chatName = '';
+
+        const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+        function setBadge(n) {
+            const el = document.getElementById('msg-badge');
+            el.textContent = n > 99 ? '99+' : n;
+            el.classList.toggle('hidden', !n);
+        }
+
+        async function refreshBadge() {
+            try {
+                const r = await fetch('/api/messages/unread-count', { credentials: 'same-origin' });
+                if (r.ok) setBadge((await r.json()).count || 0);
+            } catch (e) {}
+        }
+
+        async function loadContacts() {
+            const box = document.getElementById('contacts');
+            try {
+                const res = await fetch('/api/messages/contacts', { credentials: 'same-origin' });
+                const rows = await res.json();
+                if (!res.ok) throw new Error(rows.error || 'Could not load contacts.');
+
+                // If we arrived via ?user=ID for someone with no history yet, keep them in the list.
+                if (chatWith && !rows.some(c => Number(c.id) === chatWith)) {
+                    rows.unshift({ id: chatWith, name: chatName || ('User #' + chatWith), unread: 0 });
+                }
+
+                box.innerHTML = rows.length ? rows.map(c => `
+                    <button type="button" data-id="${Number(c.id)}" data-name="${esc(c.name)}"
+                        class="w-full text-left px-3 py-2.5 rounded-xl border text-sm flex justify-between items-center
+                        ${Number(c.id) === chatWith ? 'border-rose-400 bg-white' : (c.unread ? 'border-rose-300 bg-rose-50 font-bold' : 'border-stone-200 bg-white')}">
+                        <span class="truncate">${esc(c.name)}</span>
+                        ${c.unread ? `<span class="bg-rose-600 text-white text-xs px-2 py-0.5 rounded-full">${Number(c.unread)}</span>` : ''}
+                    </button>`).join('')
+                    : '<p class="text-sm text-stone-400">No conversations yet. Use “Message Seller” on an artwork to start one.</p>';
+            } catch (e) {
+                box.innerHTML = `<p class="text-sm text-rose-600">${esc(e.message)}</p>`;
+            }
+        }
+
+        async function openChat(id, name) {
+            chatWith = Number(id);
+            chatName = name;
+            document.getElementById('chat-title').textContent = 'Conversation with ' + name;
+            document.getElementById('chat-form').classList.remove('hidden');
+
+            const box = document.getElementById('history');
+            try {
+                const res = await fetch('/api/messages/' + chatWith, { credentials: 'same-origin' });
+                const rows = await res.json();
+                if (!res.ok) throw new Error(rows.error || 'Could not load messages.');
+
+                box.innerHTML = rows.length ? rows.map(m => {
+                    const mine = Number(m.sender_id) === Number(me.userId);
+                    return `<div class="${mine ? 'text-right' : ''}">
+                        <span class="inline-block max-w-[85%] px-3 py-2 rounded-2xl text-xs ${mine ? 'bg-stone-900 text-white' : 'bg-white border border-orange-100'}">${esc(m.message)}</span>
+                    </div>`;
+                }).join('') : '<p class="text-center text-stone-400 text-xs py-16">No messages yet. Say hello!</p>';
+                box.scrollTop = box.scrollHeight;
+            } catch (e) {
+                box.innerHTML = `<p class="text-center text-rose-600 text-xs">${esc(e.message)}</p>`;
+            }
+
+            // Opening a conversation marks it read: refresh the indicators.
+            loadContacts();
+            refreshBadge();
+        }
+
+        document.getElementById('contacts').addEventListener('click', e => {
+            const b = e.target.closest('button[data-id]');
+            if (b) openChat(b.dataset.id, b.dataset.name);
+        });
+
+        document.getElementById('chat-form').addEventListener('submit', async e => {
+            e.preventDefault();
+            const input = document.getElementById('chat-text');
+            const message = input.value.trim();
+            if (!message || !chatWith) return;
+
+            const res = await fetch('/api/messages', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ receiverId: chatWith, message })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) return alert(data.error || 'Could not send message.');
+            input.value = '';
+            openChat(chatWith, chatName);
+        });
+
+        (async function init() {
+            const s = await (await fetch('/api/session', { credentials: 'same-origin' })).json();
+            if (!s.loggedIn) { location.href = 'login.html?next=message.html'; return; }
+            me = s;
+            if (s.role === 'seller' || s.role === 'admin') {
+                document.getElementById('dash-link').classList.remove('hidden');
+            }
+
+            const wanted = Number(new URLSearchParams(location.search).get('user'));
+            if (Number.isInteger(wanted) && wanted > 0 && wanted !== Number(s.userId)) {
+                chatWith = wanted;
+            }
+
+            await loadContacts();
+            if (chatWith) {
+                const btn = document.querySelector(`#contacts button[data-id="${chatWith}"]`);
+                openChat(chatWith, btn ? btn.dataset.name : ('User #' + chatWith));
+            }
+            refreshBadge();
+
+            // Poll for new messages / unread counts.
+            setInterval(() => {
+                refreshBadge();
+                if (chatWith) openChat(chatWith, chatName);
+                else loadContacts();
+            }, 15000);
+        })();
+    </script>
+</body>
+</html>

@@ -1,0 +1,1219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Salaksak Studio & Dashboard</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; }
+        html { scroll-behavior: smooth; }
+
+        #my-artworks-container { position: relative; overflow: visible; }
+
+        #my-artworks-container .artwork-card {
+            position: relative;
+            z-index: 1;
+            isolation: auto;
+            min-width: 0;
+        }
+
+        #my-artworks-container .artwork-card:hover { z-index: 5; }
+
+        #my-artworks-container .artwork-image {
+            display: block;
+            width: 100%;
+            height: 13rem;
+            object-fit: cover;
+            pointer-events: none !important;
+            user-select: none;
+        }
+
+        #my-artworks-container .artwork-actions {
+            position: relative;
+            z-index: 10;
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.5rem;
+            margin-top: 1.25rem;
+            pointer-events: auto !important;
+        }
+
+        #my-artworks-container .artwork-actions button {
+            position: relative;
+            z-index: 11;
+            display: block;
+            width: 100%;
+            min-height: 44px;
+            border: 0;
+            cursor: pointer;
+            pointer-events: auto !important;
+            touch-action: manipulation;
+            user-select: none;
+        }
+
+        #my-artworks-container .artwork-actions button:focus-visible {
+            outline: 3px solid #f43f5e;
+            outline-offset: 3px;
+        }
+
+        #my-artworks-container .artwork-actions button:disabled {
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        #my-artworks-container .artwork-card::before,
+        #my-artworks-container .artwork-card::after,
+        #my-artworks-container .artwork-actions::before,
+        #my-artworks-container .artwork-actions::after {
+            pointer-events: none !important;
+        }
+
+        button:disabled { cursor: not-allowed; opacity: 0.6; }
+
+        input:focus, button:focus-visible { outline-color: #f43f5e; }
+    </style>
+</head>
+
+<body class="bg-slate-50 min-h-screen font-sans">
+
+    <!-- HEADER -->
+    <header class="bg-white border-b border-slate-200 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+            <div>
+                <span class="text-xl font-bold tracking-tight text-slate-900">
+                    salaksak<span class="text-rose-600">.studio</span>
+                </span>
+            </div>
+
+            <div class="flex items-center space-x-4">
+                <a id="header-notif-link" href="#notifications-section"
+                   class="hidden text-sm font-medium text-slate-600 hover:text-slate-950 transition">
+                    🔔 Orders
+                    <span id="header-notif-badge" class="hidden ml-1 bg-rose-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">0</span>
+                </a>
+
+                <a href="#messages-section"
+                   class="text-sm font-medium text-slate-600 hover:text-slate-950 transition">
+                    💬 Messages
+                    <span id="msg-badge" class="hidden ml-1 bg-rose-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">0</span>
+                </a>
+
+                <a href="index.html"
+                   class="text-sm font-medium text-slate-600 hover:text-slate-950 transition">
+                    Return to Gallery
+                </a>
+
+                <button id="logout-btn"
+                        type="button"
+                        class="bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-800 transition">
+                    Logout
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- MAIN -->
+    <main class="max-w-7xl mx-auto px-6 py-10">
+
+        <!-- WELCOME -->
+        <div id="welcome-banner"
+             class="mb-8 bg-white border border-slate-200 p-6 rounded-2xl shadow-sm">
+            <h1 id="user-greeting" class="text-2xl font-bold text-slate-900">
+                Loading dashboard...
+            </h1>
+
+            <p id="user-notification" class="text-slate-600 mt-1">
+                Please wait while we verify your session.
+            </p>
+        </div>
+
+        <!-- ORDER NOTIFICATIONS (sellers / admin) -->
+        <section id="notifications-section"
+                 class="hidden mb-8 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm scroll-mt-24">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-bold text-slate-900">
+                    🔔 Order Notifications
+                    <span id="notif-badge" class="hidden ml-2 bg-rose-600 text-white text-xs font-bold px-2 py-0.5 rounded-full">0</span>
+                </h2>
+                <button id="mark-notifs-read" type="button" class="text-xs font-bold text-rose-600 hover:underline">
+                    Mark all read
+                </button>
+            </div>
+            <div id="notifications-list" class="space-y-2">
+                <p class="text-sm text-slate-400">Loading...</p>
+            </div>
+        </section>
+
+        <!-- ORDERS (sellers / admin) -->
+        <section id="orders-section"
+                 class="hidden mb-8 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm scroll-mt-24">
+            <h2 class="text-xl font-bold text-slate-900 mb-4">📦 Orders for My Artworks</h2>
+            <div id="orders-list" class="space-y-3">
+                <p class="text-sm text-slate-400">Loading...</p>
+            </div>
+        </section>
+
+        <!-- BUYER VIEW -->
+        <div id="buyer-dashboard-view" class="hidden space-y-6 mb-8">
+            <div class="bg-gradient-to-r from-rose-500 to-pink-600 rounded-2xl p-8 text-white shadow-md">
+                <h2 class="text-2xl font-bold mb-2">
+                    Welcome to your collector hub!
+                </h2>
+
+                <p class="text-rose-100 max-w-xl">
+                    Browse original masterpieces across the Salaksak network.
+                    You can apply to become a verified studio creator whenever
+                    you're ready.
+                </p>
+
+                <div class="mt-6">
+                    <a href="index.html"
+                       class="inline-block bg-white text-rose-600 font-semibold px-5 py-2.5 rounded-xl shadow hover:bg-rose-50 transition">
+                        Explore Gallery
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- MESSAGES (everyone) -->
+        <section id="messages-section"
+                 class="hidden mb-8 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm scroll-mt-24">
+            <h2 class="text-xl font-bold text-slate-900 mb-4">💬 Messages</h2>
+
+            <div class="grid md:grid-cols-3 gap-4">
+                <div id="contacts-list" class="space-y-2 md:border-r md:border-slate-200 md:pr-4">
+                    <p class="text-sm text-slate-400">Loading...</p>
+                </div>
+
+                <div class="md:col-span-2">
+                    <p id="chat-title" class="text-sm font-bold text-slate-700 mb-2">
+                        Select a conversation
+                    </p>
+
+                    <div id="chat-history"
+                         class="h-64 overflow-y-auto bg-slate-50 rounded-xl p-4 space-y-2"></div>
+
+                    <form id="chat-form" class="mt-3 flex gap-2 hidden">
+                        <input id="chat-text" required maxlength="2000"
+                               placeholder="Write a reply..."
+                               class="flex-1 border border-slate-300 rounded-xl px-4 py-2.5 text-sm">
+                        <button class="bg-slate-900 text-white px-5 rounded-xl text-sm font-bold">Send</button>
+                    </form>
+                </div>
+            </div>
+        </section>
+
+        <!-- SELLER STUDIO -->
+        <div id="studio-section" class="hidden space-y-8">
+
+            <!-- ADD ARTWORK -->
+            <div class="bg-white border border-slate-200 rounded-2xl p-8 shadow-sm">
+                <div class="mb-6">
+                    <h2 class="text-xl font-bold text-slate-900">
+                        Release New Masterwork
+                    </h2>
+
+                    <p class="text-sm text-slate-500">
+                        Publish your artwork to the Salaksak gallery.
+                    </p>
+                </div>
+
+                <form id="artwork-form" class="space-y-5">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+                        <div>
+                            <label for="title"
+                                   class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-2">
+                                Masterwork Title
+                            </label>
+
+                            <input type="text" id="title" name="title" required
+                                   placeholder="e.g. Tagumpay"
+                                   class="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3">
+                        </div>
+
+                        <div>
+                            <label for="artist"
+                                   class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-2">
+                                Artist / Creator Name
+                            </label>
+
+                            <input type="text" id="artist" name="artist"
+                                   placeholder="Your Artist Name"
+                                   class="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+                        <div>
+                            <label for="medium"
+                                   class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-2">
+                                Medium
+                            </label>
+
+                            <input type="text" id="medium" name="medium" required
+                                   placeholder="Acrylic"
+                                   class="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3">
+                        </div>
+
+                        <div>
+                            <label for="price"
+                                   class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-2">
+                                Price USD
+                            </label>
+
+                            <input type="number" step="0.01" min="0"
+                                   id="price" name="price" required
+                                   placeholder="143.00"
+                                   class="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3">
+                        </div>
+
+                        <div>
+                            <label for="stock"
+                                   class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-2">
+                                Stock Left
+                            </label>
+
+                            <input type="number" min="0" step="1"
+                                   id="stock" name="stock" required value="1"
+                                   placeholder="1"
+                                   class="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-3">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label for="image"
+                               class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-2">
+                            Artwork Image
+                        </label>
+
+                        <input type="file" id="image" name="image"
+                               accept="image/*" required
+                               class="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5">
+                    </div>
+
+                    <button type="submit"
+                            class="w-full bg-rose-600 text-white font-semibold py-3.5 rounded-xl hover:bg-rose-700 transition">
+                        Release Masterwork to Catalog
+                    </button>
+                </form>
+            </div>
+
+            <!-- MY COLLECTION -->
+            <div class="bg-white border border-slate-200 rounded-2xl p-8 shadow-sm">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between mb-6">
+                    <div>
+                        <h2 class="text-xl font-bold text-slate-900">
+                            My Collection
+                        </h2>
+
+                        <p class="text-sm text-slate-500 mt-1">
+                            Manage your published artworks, prices, and stock.
+                        </p>
+                    </div>
+
+                    <span id="collection-count"
+                          class="mt-3 md:mt-0 text-sm font-bold text-rose-600">
+                        0 Items
+                    </span>
+                </div>
+
+                <div id="my-artworks-container"
+                     class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <p class="text-slate-500">Loading your collection...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ADMIN MODERATION -->
+        <div id="admin-section"
+             class="hidden mt-10 bg-white border border-slate-200 rounded-2xl p-8 shadow-sm">
+            <h2 class="text-xl font-bold text-slate-900 mb-4">
+                Admin Moderation Hub
+            </h2>
+
+            <div id="applications-container" class="space-y-4">
+                <p class="text-slate-500 text-sm">
+                    Loading applications...
+                </p>
+            </div>
+        </div>
+    </main>
+
+    <!-- EDIT ARTWORK MODAL -->
+    <div id="edit-modal" class="hidden fixed inset-0 z-[100] bg-black/50 items-center justify-center p-5">
+        <form id="edit-form" class="bg-white rounded-2xl w-full max-w-lg p-6 space-y-3 shadow-2xl">
+            <h3 class="text-lg font-bold text-slate-900">Edit Artwork</h3>
+            <input type="hidden" id="edit-id">
+
+            <div>
+                <label for="edit-title" class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">Title</label>
+                <input id="edit-title" required class="w-full border border-slate-300 rounded-xl px-4 py-2.5">
+            </div>
+
+            <div>
+                <label for="edit-artist" class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">Artist / Creator</label>
+                <input id="edit-artist" class="w-full border border-slate-300 rounded-xl px-4 py-2.5">
+            </div>
+
+            <div>
+                <label for="edit-medium" class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">Medium</label>
+                <input id="edit-medium" placeholder="Acrylic, Oil on Canvas, Digital Art..." class="w-full border border-slate-300 rounded-xl px-4 py-2.5">
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label for="edit-price" class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">Price USD</label>
+                    <input id="edit-price" type="number" step="0.01" min="0" required class="w-full border border-slate-300 rounded-xl px-4 py-2.5">
+                </div>
+                <div>
+                    <label for="edit-stock" class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">Stock</label>
+                    <input id="edit-stock" type="number" step="1" min="0" required class="w-full border border-slate-300 rounded-xl px-4 py-2.5">
+                </div>
+            </div>
+
+            <div>
+                <label for="edit-image" class="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">Replace image (optional)</label>
+                <input id="edit-image" type="file" accept="image/*" class="w-full border border-slate-300 rounded-xl px-3 py-2">
+            </div>
+
+            <div class="flex gap-2 pt-2">
+                <button type="button" onclick="closeEdit()" class="flex-1 border border-slate-300 rounded-xl py-2.5 font-bold text-sm hover:bg-slate-50">Cancel</button>
+                <button type="submit" id="edit-save-btn" class="flex-1 bg-rose-600 text-white rounded-xl py-2.5 font-bold text-sm hover:bg-rose-700">Save changes</button>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        'use strict';
+
+        let currentUser = null;
+        let myArtworks = [];
+        let loadingArtworks = false;
+        let chatWith = null;
+        let chatWithName = '';
+
+        const ORDER_STATUSES = ['Pending', 'Processing', 'Shipped', 'Completed', 'Cancelled'];
+
+        function isCreator() {
+            return !!currentUser && (currentUser.role === 'seller' || currentUser.role === 'admin');
+        }
+
+        // HTML ESCAPE
+        function escapeHtml(value) {
+            if (value === null || value === undefined) return '';
+
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        // Make sure image paths always point to /uploads/...
+        function normalizeImageUrl(imageUrl) {
+            if (!imageUrl) return '';
+            let src = String(imageUrl).trim();
+            if (src.includes('\\uploads\\')) src = '/uploads/' + src.split('\\uploads\\').pop();
+            if (src.startsWith('uploads/')) src = '/' + src;
+            if (!src.startsWith('/') && !src.startsWith('http://') && !src.startsWith('https://')) {
+                src = '/uploads/' + src;
+            }
+            return src;
+        }
+
+        // API RESPONSE HELPER
+        async function readResponse(response) {
+            const text = await response.text();
+
+            let data;
+
+            try {
+                data = text ? JSON.parse(text) : {};
+            } catch {
+                throw new Error(
+                    'The server did not return JSON. Open the site through the Node server ' +
+                    '(for example http://localhost:3000 after running "node server.js"), ' +
+                    'not through Live Server or a file. Status: ' + response.status + '.'
+                );
+            }
+
+            if (!response.ok) {
+                throw new Error(
+                    data.error ||
+                    data.message ||
+                    `Request failed (${response.status}).`
+                );
+            }
+
+            return data;
+        }
+
+        // SESSION
+        async function loadSession() {
+            try {
+                const response = await fetch('/api/session', {
+                    credentials: 'same-origin',
+                    headers: { 'Accept': 'application/json' }
+                });
+
+                const data = await readResponse(response);
+
+                if (!data.loggedIn) {
+                    window.location.href = 'index.html';
+                    return;
+                }
+
+                currentUser = data;
+
+                if (data.role !== 'admin' && data.role !== 'seller' && data.status === 'pending') {
+                    window.location.href = 'pending.html';
+                    return;
+                }
+
+                document.getElementById('user-greeting').textContent =
+                    `Welcome back, ${data.name || 'User'}!`;
+
+                document.getElementById('user-notification').textContent =
+                    data.notification_message ||
+                    'Welcome to your Salaksak dashboard.';
+
+                const buyerView = document.getElementById('buyer-dashboard-view');
+                const studio = document.getElementById('studio-section');
+                const admin = document.getElementById('admin-section');
+
+                if (data.role === 'admin') {
+                    studio.classList.remove('hidden');
+                    admin.classList.remove('hidden');
+
+                    await Promise.all([
+                        loadAdminApplications(),
+                        loadMyArtworks()
+                    ]);
+                } else if (data.role === 'seller' && data.status === 'approved') {
+                    studio.classList.remove('hidden');
+                    await loadMyArtworks();
+                } else {
+                    buyerView.classList.remove('hidden');
+                }
+
+                initExtras();
+            } catch (error) {
+                console.error('Session error:', error);
+
+                document.getElementById('user-greeting').textContent =
+                    'Unable to load dashboard';
+
+                document.getElementById('user-notification').textContent =
+                    (error instanceof TypeError
+                        ? 'Cannot reach the server. Make sure "node server.js" is running and you opened http://localhost:3000. '
+                        : '') + (error.message || 'Please sign in again.');
+
+                if (/401|403|not logged in|unauthorized|sign in/i.test(error.message)) {
+                    window.location.href = 'index.html';
+                }
+            }
+        }
+
+        // CREATE ARTWORK
+        document.getElementById('artwork-form')
+            .addEventListener('submit', async function (event) {
+                event.preventDefault();
+
+                const submitButton = this.querySelector('button[type="submit"]');
+                const formData = new FormData(this);
+
+                submitButton.disabled = true;
+                submitButton.textContent = 'Publishing...';
+
+                try {
+                    const response = await fetch('/api/artworks', {
+                        method: 'POST',
+                        body: formData,
+                        credentials: 'same-origin'
+                    });
+
+                    await readResponse(response);
+
+                    alert('Artwork published successfully!');
+
+                    this.reset();
+                    document.getElementById('stock').value = 1;
+
+                    await loadMyArtworks();
+                } catch (error) {
+                    console.error('Publish artwork error:', error);
+                    alert(error.message || 'Could not publish artwork.');
+                } finally {
+                    submitButton.disabled = false;
+                    submitButton.textContent = 'Release Masterwork to Catalog';
+                }
+            });
+
+        // LOAD SELLER COLLECTION
+        async function loadMyArtworks() {
+            if (loadingArtworks) return;
+
+            loadingArtworks = true;
+
+            const container = document.getElementById('my-artworks-container');
+
+            container.innerHTML =
+                '<p class="text-slate-500">Loading your collection...</p>';
+
+            try {
+                const response = await fetch('/api/my-artworks', {
+                    credentials: 'same-origin',
+                    headers: { 'Accept': 'application/json' }
+                });
+
+                const data = await readResponse(response);
+
+                if (!Array.isArray(data)) {
+                    throw new Error('The artwork API did not return a list.');
+                }
+
+                myArtworks = data;
+                renderMyArtworks();
+            } catch (error) {
+                console.error('Load artworks error:', error);
+
+                container.innerHTML = `
+                    <p class="col-span-full text-rose-600">
+                        ${escapeHtml(error.message)}
+                    </p>
+                `;
+            } finally {
+                loadingArtworks = false;
+            }
+        }
+
+        // RENDER SELLER COLLECTION
+        function renderMyArtworks() {
+            const container = document.getElementById('my-artworks-container');
+
+            document.getElementById('collection-count').textContent =
+                `${myArtworks.length} Item${myArtworks.length !== 1 ? 's' : ''}`;
+
+            if (myArtworks.length === 0) {
+                container.innerHTML = `
+                    <div class="col-span-full text-center py-12 bg-slate-50 rounded-xl">
+                        <p class="text-slate-500">
+                            You haven't published any artwork yet.
+                        </p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = myArtworks.map(art => {
+                const stock = Number(art.stock ?? 0);
+                const price = Number(art.price ?? 0);
+
+                const stockText = stock === 0 ? 'Out of Stock' : `${stock} left`;
+
+                const stockClasses = stock === 0
+                    ? 'bg-rose-100 text-rose-700'
+                    : 'bg-emerald-100 text-emerald-700';
+
+                const imgSrc = normalizeImageUrl(art.image_url);
+
+                const imageMarkup = imgSrc
+                    ? `
+                        <img
+                            src="${escapeHtml(imgSrc)}"
+                            alt="${escapeHtml(art.title || 'Artwork')}"
+                            class="artwork-image"
+                            loading="lazy"
+                        >
+                    `
+                    : `
+                        <div class="w-full h-52 bg-slate-100 flex items-center justify-center text-slate-400">
+                            No Image
+                        </div>
+                    `;
+
+                return `
+                    <article
+                        class="artwork-card border border-slate-200 rounded-2xl overflow-hidden bg-white shadow-sm"
+                        data-card-artwork-id="${escapeHtml(art.id)}"
+                    >
+                        ${imageMarkup}
+
+                        <div class="p-5">
+                            <div class="flex justify-between items-start gap-3">
+                                <div class="min-w-0">
+                                    <h3 class="font-bold text-lg text-slate-900 break-words">
+                                        ${escapeHtml(art.title)}
+                                    </h3>
+
+                                    <p class="text-sm text-slate-500">
+                                        ${escapeHtml(art.medium)}
+                                    </p>
+                                </div>
+
+                                <span class="${stockClasses} text-xs font-bold px-3 py-1 rounded-full whitespace-nowrap">
+                                    ${escapeHtml(stockText)}
+                                </span>
+                            </div>
+
+                            <div class="mt-4">
+                                <p class="text-xs text-slate-400 uppercase font-bold">
+                                    Price
+                                </p>
+
+                                <p class="text-xl font-black text-rose-600">
+                                    $${Number.isFinite(price) ? price.toFixed(2) : '0.00'}
+                                </p>
+                            </div>
+
+                            <div class="artwork-actions">
+                                <button
+                                    type="button"
+                                    data-action="edit"
+                                    data-artwork-id="${escapeHtml(art.id)}"
+                                    class="border border-slate-300 bg-white text-slate-800 py-2 rounded-lg font-bold text-sm hover:bg-slate-100"
+                                >
+                                    Edit
+                                </button>
+
+                                <button
+                                    type="button"
+                                    data-action="delete"
+                                    data-artwork-id="${escapeHtml(art.id)}"
+                                    class="bg-rose-600 text-white py-2 rounded-lg font-bold text-sm hover:bg-rose-700"
+                                >
+                                    Delete
+                                </button>
+                            </div>
+                        </div>
+                    </article>
+                `;
+            }).join('');
+        }
+
+        // EDIT / DELETE CLICK HANDLER
+        // Delegated listener remains active when cards are re-rendered.
+        document
+            .getElementById('my-artworks-container')
+            .addEventListener('click', async function (event) {
+                const target = event.target;
+
+                if (!(target instanceof Element)) return;
+
+                const button = target.closest('button[data-action][data-artwork-id]');
+
+                if (!button || !this.contains(button) || button.disabled) {
+                    return;
+                }
+
+                const action = button.dataset.action;
+                const id = button.dataset.artworkId;
+
+                if (!id || !['edit', 'delete'].includes(action)) {
+                    return;
+                }
+
+                event.preventDefault();
+
+                if (action === 'edit') {
+                    editArtwork(id);
+                } else if (action === 'delete') {
+                    await deleteArtwork(id);
+                }
+            });
+
+        // EDIT ARTWORK (modal form instead of a chain of prompt() boxes)
+        function editArtwork(id) {
+            const art = myArtworks.find(item => String(item.id) === String(id));
+
+            if (!art) {
+                alert('Artwork not found. Refresh your collection and try again.');
+                loadMyArtworks();
+                return;
+            }
+
+            document.getElementById('edit-id').value = art.id;
+            document.getElementById('edit-title').value = art.title || '';
+            document.getElementById('edit-artist').value = art.artist || '';
+            document.getElementById('edit-medium').value = art.medium || '';
+            document.getElementById('edit-price').value = art.price ?? 0;
+            document.getElementById('edit-stock').value = art.stock ?? 1;
+            document.getElementById('edit-image').value = '';
+
+            const modal = document.getElementById('edit-modal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function closeEdit() {
+            const modal = document.getElementById('edit-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        document.getElementById('edit-form').addEventListener('submit', async function (event) {
+            event.preventDefault();
+
+            const saveBtn = document.getElementById('edit-save-btn');
+            const id = document.getElementById('edit-id').value;
+
+            const price = document.getElementById('edit-price').value;
+            const stock = document.getElementById('edit-stock').value;
+
+            if (price === '' || Number(price) < 0 || !Number.isFinite(Number(price))) {
+                alert('Enter a valid non-negative price.');
+                return;
+            }
+
+            if (stock === '' || !Number.isInteger(Number(stock)) || Number(stock) < 0) {
+                alert('Stock must be a whole number of 0 or greater.');
+                return;
+            }
+
+            const fd = new FormData();
+            fd.append('title', document.getElementById('edit-title').value.trim());
+            fd.append('artist', document.getElementById('edit-artist').value.trim());
+            fd.append('medium', document.getElementById('edit-medium').value.trim());
+            fd.append('price', price);
+            fd.append('stock', stock);
+
+            const file = document.getElementById('edit-image').files[0];
+            if (file) fd.append('image', file);
+
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Saving...';
+
+            try {
+                // No Content-Type header: the browser sets the multipart boundary.
+                const response = await fetch(`/api/artworks/${encodeURIComponent(id)}`, {
+                    method: 'PUT',
+                    body: fd,
+                    credentials: 'same-origin'
+                });
+
+                await readResponse(response);
+
+                closeEdit();
+                alert('Artwork updated successfully!');
+                await loadMyArtworks();
+            } catch (error) {
+                console.error('Edit artwork error:', error);
+                alert(error.message || 'Could not update artwork.');
+            } finally {
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Save changes';
+            }
+        });
+
+        // DELETE ARTWORK
+        async function deleteArtwork(id) {
+            const artwork = myArtworks.find(item => String(item.id) === String(id));
+
+            if (!artwork) {
+                alert('Artwork not found. Refresh your collection and try again.');
+                return;
+            }
+
+            const confirmed = confirm(`Are you sure you want to delete "${artwork.title}"?`);
+
+            if (!confirmed) return;
+
+            try {
+                const response = await fetch(`/api/artworks/${encodeURIComponent(id)}`, {
+                    method: 'DELETE',
+                    credentials: 'same-origin',
+                    headers: { 'Accept': 'application/json' }
+                });
+
+                await readResponse(response);
+
+                alert('Artwork deleted successfully!');
+
+                await loadMyArtworks();
+            } catch (error) {
+                console.error('Delete artwork error:', error);
+                alert(error.message || 'Could not delete artwork.');
+            }
+        }
+
+        // ADMIN APPLICATIONS
+        async function loadAdminApplications() {
+            const container = document.getElementById('applications-container');
+
+            try {
+                const response = await fetch('/api/admin/applications', {
+                    credentials: 'same-origin',
+                    headers: { 'Accept': 'application/json' }
+                });
+
+                const apps = await readResponse(response);
+
+                if (!Array.isArray(apps) || apps.length === 0) {
+                    container.innerHTML = `
+                        <p class="text-slate-500 text-sm">
+                            No pending seller applications.
+                        </p>
+                    `;
+                    return;
+                }
+
+                container.innerHTML = apps.map(app => `
+                    <div class="border border-slate-200 rounded-xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-slate-50">
+                        <div>
+                            <h4 class="font-bold text-slate-900">
+                                ${escapeHtml(app.name)}
+                                (${escapeHtml(app.store_name)})
+                            </h4>
+
+                            <p class="text-sm text-slate-600">
+                                Email: ${escapeHtml(app.email)}
+                            </p>
+
+                            ${
+                                app.portfolio_url
+                                    ? `
+                                        <a
+                                            href="${escapeHtml(app.portfolio_url)}"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            class="text-xs text-rose-600 underline mt-1 inline-block"
+                                        >
+                                            View Portfolio
+                                        </a>
+                                    `
+                                    : ''
+                            }
+                        </div>
+
+                        <div class="flex gap-2">
+                            <button
+                                type="button"
+                                data-review-user-id="${escapeHtml(app.id)}"
+                                data-review-decision="approved"
+                                class="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-semibold"
+                            >
+                                Approve
+                            </button>
+
+                            <button
+                                type="button"
+                                data-review-user-id="${escapeHtml(app.id)}"
+                                data-review-decision="rejected"
+                                class="bg-rose-600 text-white px-4 py-2 rounded-lg text-sm font-semibold"
+                            >
+                                Reject
+                            </button>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('Load applications error:', error);
+
+                container.innerHTML = `
+                    <p class="text-rose-600 text-sm">
+                        ${escapeHtml(error.message)}
+                    </p>
+                `;
+            }
+        }
+
+        // ADMIN REVIEW BUTTONS
+        document
+            .getElementById('applications-container')
+            .addEventListener('click', async function (event) {
+                const target = event.target;
+
+                if (!(target instanceof Element)) return;
+
+                const button = target.closest('button[data-review-user-id]');
+
+                if (!button || !this.contains(button)) return;
+
+                const userId = button.dataset.reviewUserId;
+                const decision = button.dataset.reviewDecision;
+
+                if (!userId || !['approved', 'rejected'].includes(decision)) {
+                    return;
+                }
+
+                await reviewApp(userId, decision);
+            });
+
+        // REVIEW APPLICATION
+        async function reviewApp(userId, decision) {
+            try {
+                const response = await fetch('/api/admin/review-seller', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify({ userId, decision })
+                });
+
+                await readResponse(response);
+
+                alert(`Application ${decision} successfully.`);
+
+                await loadAdminApplications();
+            } catch (error) {
+                console.error('Review application error:', error);
+                alert(error.message || 'Could not review application.');
+            }
+        }
+
+        /* ---------- UNREAD BADGES ---------- */
+        function setBadge(id, n) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = n > 99 ? '99+' : n;
+            el.classList.toggle('hidden', !n);
+        }
+
+        async function refreshBadges() {
+            if (!currentUser) return;
+
+            try {
+                const m = await fetch('/api/messages/unread-count', { credentials: 'same-origin' });
+                if (m.ok) setBadge('msg-badge', (await m.json()).count || 0);
+
+                if (isCreator()) {
+                    const n = await fetch('/api/notifications/unread-count', { credentials: 'same-origin' });
+                    if (n.ok) {
+                        const count = (await n.json()).count || 0;
+                        setBadge('notif-badge', count);
+                        setBadge('header-notif-badge', count);
+                    }
+                }
+            } catch (e) { /* ignore transient network errors */ }
+        }
+
+        /* ---------- ORDER NOTIFICATIONS ---------- */
+        async function loadNotifications() {
+            const list = document.getElementById('notifications-list');
+
+            try {
+                const rows = await readResponse(
+                    await fetch('/api/notifications', { credentials: 'same-origin' })
+                );
+
+                list.innerHTML = rows.length
+                    ? rows.map(n => `
+                        <div class="p-3 rounded-xl text-sm border ${n.is_read
+                            ? 'bg-slate-50 border-slate-200 text-slate-500'
+                            : 'bg-rose-50 border-rose-200 text-slate-900 font-semibold'}">
+                            ${escapeHtml(n.message)}
+                            <span class="block text-[11px] font-normal text-slate-400 mt-1">${escapeHtml(n.created_at)}</span>
+                        </div>`).join('')
+                    : '<p class="text-sm text-slate-400">No notifications yet. When a buyer orders your artwork, it will show up here.</p>';
+            } catch (e) {
+                list.innerHTML = `<p class="text-rose-600 text-sm">${escapeHtml(e.message)}</p>`;
+            }
+        }
+
+        document.getElementById('mark-notifs-read').addEventListener('click', async () => {
+            await fetch('/api/notifications/read', { method: 'POST', credentials: 'same-origin' });
+            await loadNotifications();
+            refreshBadges();
+        });
+
+        /* ---------- SELLER ORDERS ---------- */
+        async function loadOrders() {
+            const box = document.getElementById('orders-list');
+
+            try {
+                const rows = await readResponse(
+                    await fetch('/api/orders/seller', { credentials: 'same-origin' })
+                );
+
+                box.innerHTML = rows.length
+                    ? rows.map(o => `
+                        <div class="border border-slate-200 rounded-xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                            <div class="text-sm">
+                                <b>Order #${Number(o.order_id)}</b> — ${Number(o.quantity)} × ${escapeHtml(o.title)}
+                                ($${Number(o.subtotal).toFixed(2)})
+                                <p class="text-slate-500">${escapeHtml(o.full_name)} · ${escapeHtml(o.contact_number)} · ${escapeHtml(o.email)}</p>
+                                <p class="text-slate-500">${escapeHtml(o.address)}, ${escapeHtml(o.country)} · ${escapeHtml(o.payment_method)}</p>
+                            </div>
+                            <select data-order-id="${Number(o.order_id)}" class="border border-slate-300 rounded-lg px-3 py-2 text-sm">
+                                ${ORDER_STATUSES.map(s => `<option ${s === o.order_status ? 'selected' : ''}>${s}</option>`).join('')}
+                            </select>
+                        </div>`).join('')
+                    : '<p class="text-sm text-slate-400">No orders yet.</p>';
+            } catch (e) {
+                box.innerHTML = `<p class="text-rose-600 text-sm">${escapeHtml(e.message)}</p>`;
+            }
+        }
+
+        document.getElementById('orders-list').addEventListener('change', async event => {
+            const select = event.target.closest('select[data-order-id]');
+            if (!select) return;
+
+            try {
+                await readResponse(await fetch(`/api/orders/${select.dataset.orderId}/status`, {
+                    method: 'PATCH',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: select.value })
+                }));
+            } catch (err) {
+                alert(err.message || 'Could not update order status.');
+                await loadOrders();
+            }
+        });
+
+        /* ---------- MESSAGES INBOX ---------- */
+        async function loadContacts() {
+            const box = document.getElementById('contacts-list');
+
+            try {
+                const rows = await readResponse(
+                    await fetch('/api/messages/contacts', { credentials: 'same-origin' })
+                );
+
+                box.innerHTML = rows.length
+                    ? rows.map(c => `
+                        <button type="button"
+                                data-contact-id="${Number(c.id)}"
+                                data-contact-name="${escapeHtml(c.name)}"
+                                class="w-full text-left px-3 py-2 rounded-xl border ${c.unread
+                                    ? 'border-rose-300 bg-rose-50 font-bold'
+                                    : 'border-slate-200'} text-sm flex justify-between items-center">
+                            <span>${escapeHtml(c.name)}</span>
+                            ${c.unread ? `<span class="bg-rose-600 text-white text-xs px-2 py-0.5 rounded-full">${Number(c.unread)}</span>` : ''}
+                        </button>`).join('')
+                    : '<p class="text-sm text-slate-400">No conversations yet.</p>';
+            } catch (e) {
+                box.innerHTML = `<p class="text-rose-600 text-sm">${escapeHtml(e.message)}</p>`;
+            }
+        }
+
+        document.getElementById('contacts-list').addEventListener('click', event => {
+            const button = event.target.closest('button[data-contact-id]');
+            if (!button) return;
+            openChat(Number(button.dataset.contactId), button.dataset.contactName);
+        });
+
+        async function openChat(id, name) {
+            chatWith = id;
+            chatWithName = name;
+
+            document.getElementById('chat-title').textContent = 'Conversation with ' + name;
+            document.getElementById('chat-form').classList.remove('hidden');
+
+            const box = document.getElementById('chat-history');
+
+            try {
+                const rows = await readResponse(
+                    await fetch('/api/messages/' + id, { credentials: 'same-origin' })
+                );
+
+                box.innerHTML = rows.length
+                    ? rows.map(m => `
+                        <div class="${m.sender_id === currentUser.userId ? 'text-right' : ''}">
+                            <span class="inline-block max-w-[85%] px-3 py-2 rounded-2xl text-xs ${m.sender_id === currentUser.userId
+                                ? 'bg-slate-900 text-white'
+                                : 'bg-white border border-slate-200'}">${escapeHtml(m.message)}</span>
+                        </div>`).join('')
+                    : '<p class="text-center text-slate-400 text-xs py-16">No messages yet.</p>';
+
+                box.scrollTop = box.scrollHeight;
+            } catch (e) {
+                box.innerHTML = `<p class="text-rose-600 text-xs">${escapeHtml(e.message)}</p>`;
+            }
+
+            // Messages from this contact are now marked read: refresh the indicators.
+            loadContacts();
+            refreshBadges();
+        }
+
+        document.getElementById('chat-form').addEventListener('submit', async event => {
+            event.preventDefault();
+
+            const input = document.getElementById('chat-text');
+            const message = input.value.trim();
+
+            if (!message || !chatWith) return;
+
+            try {
+                await readResponse(await fetch('/api/messages', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ receiverId: chatWith, message })
+                }));
+
+                input.value = '';
+                await openChat(chatWith, chatWithName);
+            } catch (err) {
+                alert(err.message || 'Could not send message.');
+            }
+        });
+
+        /* ---------- START EXTRAS AFTER SESSION LOADS ---------- */
+        function initExtras() {
+            document.getElementById('messages-section').classList.remove('hidden');
+            loadContacts();
+
+            if (isCreator()) {
+                document.getElementById('notifications-section').classList.remove('hidden');
+                document.getElementById('orders-section').classList.remove('hidden');
+                document.getElementById('header-notif-link').classList.remove('hidden');
+                loadNotifications();
+                loadOrders();
+            }
+
+            refreshBadges();
+
+            // Poll so new orders / messages show up without a manual refresh.
+            setInterval(() => {
+                refreshBadges();
+                if (!chatWith) loadContacts();
+            }, 15000);
+
+            if (location.hash) {
+                const el = document.querySelector(location.hash);
+                if (el) el.scrollIntoView();
+            }
+        }
+
+        // LOGOUT
+        document
+            .getElementById('logout-btn')
+            .addEventListener('click', async function () {
+                this.disabled = true;
+                this.textContent = 'Logging out...';
+
+                try {
+                    const response = await fetch('/api/logout', {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: { 'Accept': 'application/json' }
+                    });
+
+                    if (!response.ok) {
+                        console.warn('Logout endpoint returned:', response.status);
+                    }
+                } catch (error) {
+                    console.error('Logout error:', error);
+                } finally {
+                    window.location.href = 'index.html';
+                }
+            });
+
+        // Close the edit modal with the Escape key
+        document.addEventListener('keydown', event => {
+            if (event.key === 'Escape') closeEdit();
+        });
+
+        // START DASHBOARD
+        loadSession();
+    </script>
+</body>
+</html>
