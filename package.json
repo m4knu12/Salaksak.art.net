@@ -9,19 +9,17 @@
   },
   "license": "ISC",
   "dependencies": {
-    "@libsql/client": "^0.18.0",
+    "@libsql/client": "^0.15.0",
     "bcrypt": "^5.1.1",
     "express": "^4.19.2",
     "express-session": "^1.18.0",
-    "multer": "^1.4.5-lts.1",
-    "sqlite3": "^5.1.7"
+    "multer": "^1.4.5-lts.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"
   },
   "allowScripts": {
-    "bcrypt": true,
-    "sqlite3": true
+    "bcrypt": true
   },
   "engines": {
     "node": ">=18"
