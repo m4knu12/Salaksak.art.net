@@ -3,6 +3,7 @@ const session = require("express-session");
 const sqlite3 = require("sqlite3").verbose();
 const bcrypt = require("bcrypt");
 const multer = require("multer");
+const crypto = require("crypto");
 const path = require("path");
 const fs = require("fs");
 
@@ -14,6 +15,13 @@ const IS_PROD = process.env.NODE_ENV === "production";
 const SESSION_SECRET = process.env.SESSION_SECRET || "salaksak-art-net-secret-key";
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "admin@salaksak.art.net";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
+
+// Optional: extra origins allowed to make state-changing requests
+// (comma separated, e.g. "https://www.example.com,https://example.com").
+const EXTRA_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
+    .split(",")
+    .map(s => s.trim())
+    .filter(Boolean);
 
 // Never run a public site with the built-in default secrets.
 if (IS_PROD && (!process.env.SESSION_SECRET || !process.env.ADMIN_PASSWORD)) {
@@ -32,17 +40,52 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 const uploadDir = path.join(DATA_DIR, "uploads");
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
+/* ------------------------------------------------------------------ */
+/* HELPERS                                                             */
+/* ------------------------------------------------------------------ */
+
+// An error that carries the HTTP status it should be reported with.
+class HttpError extends Error {
+    constructor(status, message) {
+        super(message);
+        this.status = status;
+    }
+}
+
+/* ---------- Upload handling (images only; PDF allowed for portfolios) ---------- */
+
+const IMAGE_TYPES = {
+    ".jpg": ["image/jpeg"],
+    ".jpeg": ["image/jpeg"],
+    ".png": ["image/png"],
+    ".gif": ["image/gif"],
+    ".webp": ["image/webp"]
+};
+const SERVE_INLINE_EXT = [...Object.keys(IMAGE_TYPES), ".pdf"];
+
+function makeFileFilter(allowPdf) {
+    return (req, file, cb) => {
+        const ext = path.extname(file.originalname || "").toLowerCase();
+        const mime = String(file.mimetype || "").toLowerCase();
+        const isImage = IMAGE_TYPES[ext] && IMAGE_TYPES[ext].includes(mime);
+        const isPdf = allowPdf && ext === ".pdf" && mime === "application/pdf";
+
+        if (isImage || isPdf) return cb(null, true);
+        cb(new Error(
+            allowPdf
+                ? "Only JPG, PNG, GIF, WebP images or PDF files are allowed."
+                : "Only JPG, PNG, GIF or WebP images are allowed."
+        ));
+    };
+}
+
 const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, uploadDir),
     filename: (req, file, cb) => {
-        const safe = path.basename(file.originalname).replace(/[^a-zA-Z0-9._-]/g, "_");
-        cb(null, Date.now() + "-" + safe);
+        // Never trust the client's file name: random name + vetted extension.
+        const ext = path.extname(file.originalname || "").toLowerCase();
+        cb(null, Date.now() + "-" + crypto.randomBytes(8).toString("hex") + ext);
     }
-});
-
-const upload = multer({
-    storage,
-    limits: { fileSize: 10 * 1024 * 1024 }
 });
 
 function deleteUploadedFiles(req) {
@@ -52,36 +95,147 @@ function deleteUploadedFiles(req) {
     }
 }
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use("/uploads", express.static(uploadDir));
+// Wraps a multer middleware so upload errors become clean JSON 400s.
+function withUpload(middleware) {
+    return (req, res, next) => {
+        middleware(req, res, err => {
+            if (err) {
+                deleteUploadedFiles(req);
+                const msg = err.code === "LIMIT_FILE_SIZE"
+                    ? "File is too large (max 10 MB)."
+                    : err.message;
+                return res.status(400).json({ success: false, error: "Upload failed: " + msg });
+            }
+            next();
+        });
+    };
+}
 
-// Behind Nginx / a host's HTTPS proxy: needed for secure cookies to work.
+const imageUpload = withUpload(multer({
+    storage,
+    limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+    fileFilter: makeFileFilter(false)
+}).any());
+
+const portfolioUpload = withUpload(multer({
+    storage,
+    limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+    fileFilter: makeFileFilter(true)
+}).any());
+
+// For login/register: accepts multipart text fields but NEVER writes a file to disk.
+const textOnly = withUpload(multer().none());
+
+/* ---------- Tiny in-memory rate limiter (no extra dependency) ---------- */
+
+function rateLimit({ windowMs, max, message }) {
+    const hits = new Map();
+
+    setInterval(() => {
+        const now = Date.now();
+        for (const [key, entry] of hits) {
+            if (entry.reset <= now) hits.delete(key);
+        }
+    }, windowMs).unref();
+
+    return (req, res, next) => {
+        const now = Date.now();
+        const key = req.ip;
+        let entry = hits.get(key);
+
+        if (!entry || entry.reset <= now) {
+            entry = { count: 0, reset: now + windowMs };
+            hits.set(key, entry);
+        }
+
+        entry.count++;
+        if (entry.count > max) {
+            res.setHeader("Retry-After", Math.ceil((entry.reset - now) / 1000));
+            return res.status(429).json({ success: false, error: message });
+        }
+        next();
+    };
+}
+
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    message: "Too many attempts. Please try again in a few minutes."
+});
+const signupLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 15,
+    message: "Too many sign-up attempts. Please try again later."
+});
+
+/* ------------------------------------------------------------------ */
+/* BASIC MIDDLEWARE & SECURITY HEADERS                                 */
+/* ------------------------------------------------------------------ */
+
+app.disable("x-powered-by");
+
+// Behind Nginx / a host's HTTPS proxy: needed for secure cookies and req.ip to work.
 app.set("trust proxy", 1);
 
-app.use(session({
-    secret: SESSION_SECRET,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-        secure: IS_PROD,          // cookie only sent over HTTPS when online
-        httpOnly: true,
-        sameSite: "lax",
-        maxAge: 1000 * 60 * 60 * 24 * 7   // stay signed in for 7 days
+// Lightweight equivalent of the most useful helmet headers.
+app.use((req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "SAMEORIGIN");
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    if (IS_PROD) {
+        res.setHeader("Strict-Transport-Security", "max-age=15552000; includeSubDomains");
+    }
+    next();
+});
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+/*
+ * CSRF defence: browsers always attach Origin (or Referer) to cross-site
+ * POST/PUT/PATCH/DELETE requests. Reject any whose origin is not this site.
+ * Requests with neither header (curl, server-to-server) carry no browser
+ * cookies, so they are let through.
+ */
+function sameOriginGuard(req, res, next) {
+    if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return next();
+
+    const source = req.get("origin") || req.get("referer");
+    if (!source) return next();
+
+    let origin = "";
+    try {
+        origin = new URL(source).origin;
+    } catch (e) {
+        origin = "";
+    }
+
+    const host = String(req.get("x-forwarded-host") || req.get("host") || "").split(",")[0].trim();
+    const own = `${req.protocol}://${host}`;
+
+    if (origin && (origin === own || EXTRA_ORIGINS.includes(origin))) return next();
+
+    return res.status(403).json({ success: false, error: "Cross-site request blocked." });
+}
+app.use("/api", sameOriginGuard);
+
+// Uploaded files: images/PDFs render normally; anything else (e.g. legacy
+// .html/.svg uploads) is forced to download and sandboxed so it cannot run scripts.
+app.use("/uploads", express.static(uploadDir, {
+    index: false,
+    dotfiles: "deny",
+    setHeaders: (res, filePath) => {
+        const ext = path.extname(filePath).toLowerCase();
+        if (!SERVE_INLINE_EXT.includes(ext)) {
+            res.setHeader("Content-Disposition", "attachment");
+            res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
+        }
     }
 }));
 
-// The database page is only served to signed-in admins.
-app.get("/admin.html", (req, res, next) => {
-    loadUser(req, res, () => {
-        if (!req.user || req.user.role !== "admin") {
-            return res.redirect("/login.html?next=admin.html");
-        }
-        next();
-    });
-});
-
-app.use(express.static(path.join(__dirname, "public")));
+/* ------------------------------------------------------------------ */
+/* DATABASE                                                            */
+/* ------------------------------------------------------------------ */
 
 const db = new sqlite3.Database(path.join(DATA_DIR, "database.sqlite"), err => {
     if (err) console.error("Database connection error:", err.message);
@@ -116,15 +270,30 @@ function all(sql, params = []) {
 }
 
 /*
- * SQLite uses ONE shared connection here, so two checkouts running at the
+ * SQLite uses ONE shared connection here, so two transactions running at the
  * same time would collide on BEGIN TRANSACTION. This queue makes sure only
- * one transaction runs at a time.
+ * one locked operation runs at a time.
  */
 let dbQueue = Promise.resolve();
 function withLock(fn) {
     const p = dbQueue.then(() => fn());
     dbQueue = p.catch(() => {});
     return p;
+}
+
+// Runs fn inside a locked transaction: COMMIT on success, ROLLBACK on error.
+function transaction(fn) {
+    return withLock(async () => {
+        await run("BEGIN TRANSACTION");
+        try {
+            const result = await fn();
+            await run("COMMIT");
+            return result;
+        } catch (err) {
+            await run("ROLLBACK").catch(() => {});
+            throw err;
+        }
+    });
 }
 
 async function addColumn(table, column, definition) {
@@ -135,7 +304,98 @@ async function addColumn(table, column, definition) {
     }
 }
 
+/* ---------- Persistent session store (replaces the leaky MemoryStore) ---------- */
+
+const SESSION_MAX_AGE = 1000 * 60 * 60 * 24 * 7; // stay signed in for 7 days
+
+class SqliteSessionStore extends session.Store {
+    get(sid, cb) {
+        get(`SELECT sess FROM sessions WHERE sid=? AND expires>?`, [sid, Date.now()])
+            .then(row => {
+                if (!row) return cb(null, null);
+                let data = null;
+                try {
+                    data = JSON.parse(row.sess);
+                } catch (e) {
+                    return cb(e);
+                }
+                cb(null, data);
+            }, err => cb(err));
+    }
+
+    set(sid, sess, cb) {
+        const expires = sess && sess.cookie && sess.cookie.expires
+            ? new Date(sess.cookie.expires).getTime()
+            : Date.now() + SESSION_MAX_AGE;
+
+        withLock(() => run(
+            `INSERT OR REPLACE INTO sessions(sid,sess,expires) VALUES(?,?,?)`,
+            [sid, JSON.stringify(sess), expires]
+        )).then(() => cb && cb(null), err => cb && cb(err));
+    }
+
+    destroy(sid, cb) {
+        withLock(() => run(`DELETE FROM sessions WHERE sid=?`, [sid]))
+            .then(() => cb && cb(null), err => cb && cb(err));
+    }
+
+    touch(sid, sess, cb) {
+        const expires = sess && sess.cookie && sess.cookie.expires
+            ? new Date(sess.cookie.expires).getTime()
+            : Date.now() + SESSION_MAX_AGE;
+
+        withLock(() => run(`UPDATE sessions SET expires=? WHERE sid=?`, [expires, sid]))
+            .then(() => cb && cb(null), err => cb && cb(err));
+    }
+}
+
+setInterval(() => {
+    run(`DELETE FROM sessions WHERE expires<?`, [Date.now()]).catch(() => {});
+}, 60 * 60 * 1000).unref();
+
+app.use(session({
+    store: new SqliteSessionStore(),
+    secret: SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        secure: IS_PROD,          // cookie only sent over HTTPS when online
+        httpOnly: true,
+        sameSite: "lax",
+        maxAge: SESSION_MAX_AGE
+    }
+}));
+
+// Creates a brand-new session id on sign-in (prevents session fixation).
+function startSession(req, user) {
+    return new Promise((resolve, reject) => {
+        req.session.regenerate(err => {
+            if (err) return reject(err);
+
+            req.session.userId = user.id;
+            req.session.role = user.role;
+            req.session.status = user.status;
+            req.session.name = user.name;
+            req.session.email = user.email;
+
+            req.session.save(saveErr => (saveErr ? reject(saveErr) : resolve()));
+        });
+    });
+}
+
+/* ------------------------------------------------------------------ */
+/* SCHEMA                                                              */
+/* ------------------------------------------------------------------ */
+
 async function initializeDatabase() {
+    await run(`
+        CREATE TABLE IF NOT EXISTS sessions (
+            sid TEXT PRIMARY KEY,
+            sess TEXT NOT NULL,
+            expires INTEGER NOT NULL
+        )
+    `);
+
     await run(`
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -223,6 +483,14 @@ async function initializeDatabase() {
         )
     `);
 
+    // Per-item status so each seller only controls their own part of an order.
+    await addColumn("order_items", "status", "TEXT");
+    await run(`
+        UPDATE order_items
+        SET status = COALESCE((SELECT o.status FROM orders o WHERE o.id = order_items.order_id), 'Pending')
+        WHERE status IS NULL
+    `);
+
     await run(`
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -247,10 +515,15 @@ async function initializeDatabase() {
         )
     `);
 
-    const hash = await bcrypt.hash(ADMIN_PASSWORD, 10);
+    /*
+     * Admin bootstrap. The password is only set when the account is first
+     * created. To deliberately reset it later, start once with
+     * RESET_ADMIN_PASSWORD=true.
+     */
     const admin = await get(`SELECT id FROM users WHERE email = ?`, [ADMIN_EMAIL]);
 
     if (!admin) {
+        const hash = await bcrypt.hash(ADMIN_PASSWORD, 10);
         await run(`
             INSERT INTO users
             (name,email,password,store_name,role,status,has_seen_approval)
@@ -267,13 +540,23 @@ async function initializeDatabase() {
     } else {
         await run(`
             UPDATE users
-            SET password=?, role='admin', status='approved'
+            SET role='admin', status='approved'
             WHERE email=?
-        `, [hash, ADMIN_EMAIL]);
+        `, [ADMIN_EMAIL]);
+
+        if (process.env.RESET_ADMIN_PASSWORD === "true") {
+            const hash = await bcrypt.hash(ADMIN_PASSWORD, 10);
+            await run(`UPDATE users SET password=? WHERE email=?`, [hash, ADMIN_EMAIL]);
+            console.log("Admin password was reset from ADMIN_PASSWORD (RESET_ADMIN_PASSWORD=true).");
+        }
     }
 
     console.log("Database ready.");
 }
+
+/* ------------------------------------------------------------------ */
+/* AUTH MIDDLEWARE                                                     */
+/* ------------------------------------------------------------------ */
 
 function loadUser(req, res, next) {
     if (!req.session.userId) {
@@ -344,7 +627,30 @@ function validId(value) {
     return Number.isInteger(Number(value)) && Number(value) > 0;
 }
 
-/* SESSION */
+// Sends a JSON error using the HttpError status when there is one.
+function sendError(res, err, logLabel, fallbackMessage) {
+    if (err instanceof HttpError) {
+        return res.status(err.status).json({ success: false, error: err.message });
+    }
+    console.error(logLabel + ":", err);
+    return res.status(500).json({ success: false, error: fallbackMessage });
+}
+
+// The database page is only served to signed-in admins.
+app.get("/admin.html", (req, res, next) => {
+    loadUser(req, res, () => {
+        if (!req.user || req.user.role !== "admin") {
+            return res.redirect("/login.html?next=admin.html");
+        }
+        next();
+    });
+});
+
+app.use(express.static(path.join(__dirname, "public")));
+
+/* ------------------------------------------------------------------ */
+/* SESSION                                                             */
+/* ------------------------------------------------------------------ */
 
 app.get("/api/session", loadUser, (req, res) => {
     if (!req.user) return res.json({ loggedIn: false });
@@ -366,11 +672,11 @@ app.get("/api/session", loadUser, (req, res) => {
     });
 });
 
-/* AUTH */
+/* ------------------------------------------------------------------ */
+/* AUTH                                                                */
+/* ------------------------------------------------------------------ */
 
-app.post("/api/register", upload.any(), async (req, res) => {
-    deleteUploadedFiles(req);
-
+app.post("/api/register", signupLimiter, textOnly, async (req, res) => {
     try {
         const name = String(req.body.name || "").trim();
         const email = String(req.body.email || "").trim().toLowerCase();
@@ -407,11 +713,13 @@ app.post("/api/register", upload.any(), async (req, res) => {
             1
         ]);
 
-        req.session.userId = result.lastID;
-        req.session.role = "buyer";
-        req.session.status = "approved";
-        req.session.name = name;
-        req.session.email = email;
+        await startSession(req, {
+            id: result.lastID,
+            role: "buyer",
+            status: "approved",
+            name,
+            email
+        });
 
         res.json({ success: true, redirect: "index.html" });
     } catch (err) {
@@ -420,9 +728,7 @@ app.post("/api/register", upload.any(), async (req, res) => {
     }
 });
 
-app.post("/api/login", upload.any(), async (req, res) => {
-    deleteUploadedFiles(req);
-
+app.post("/api/login", loginLimiter, textOnly, async (req, res) => {
     try {
         const email = String(req.body.email || "").trim().toLowerCase();
         const password = String(req.body.password || "");
@@ -451,11 +757,7 @@ app.post("/api/login", upload.any(), async (req, res) => {
             });
         }
 
-        req.session.userId = user.id;
-        req.session.role = user.role;
-        req.session.status = user.status;
-        req.session.name = user.name;
-        req.session.email = user.email;
+        await startSession(req, user);
 
         const redirect =
             user.role === "admin"
@@ -473,88 +775,91 @@ app.post("/api/login", upload.any(), async (req, res) => {
     }
 });
 
-app.post("/api/apply-seller", loadUser, (req, res) => {
-    upload.any()(req, res, async uploadErr => {
-        if (uploadErr) {
-            return res.status(400).json({
-                success: false,
-                error: "File upload failed: " + uploadErr.message
-            });
-        }
+app.post("/api/apply-seller", loadUser, signupLimiter, portfolioUpload, async (req, res) => {
+    try {
+        const storeName = String(req.body.store_name || "My Art Studio").trim();
+        const file = req.files && req.files[0];
+        const portfolioUrl = file ? `/uploads/${file.filename}` : "";
 
-        try {
-            const storeName = String(req.body.store_name || "My Art Studio").trim();
-            const file = req.files && req.files[0];
-            const portfolioUrl = file ? `/uploads/${file.filename}` : "";
+        if (!req.user) {
+            const name = String(req.body.name || "").trim();
+            const email = String(req.body.email || "").trim().toLowerCase();
+            const password = String(req.body.password || "");
 
-            if (!req.user) {
-                const name = String(req.body.name || "").trim();
-                const email = String(req.body.email || "").trim().toLowerCase();
-                const password = String(req.body.password || "");
-
-                if (!name || !email || !password) {
-                    deleteUploadedFiles(req);
-                    return res.status(400).json({
-                        success: false,
-                        error: "Name, email, and password are required."
-                    });
-                }
-
-                const existing = await get(`SELECT id FROM users WHERE email=?`, [email]);
-                if (existing) {
-                    deleteUploadedFiles(req);
-                    return res.status(400).json({
-                        success: false,
-                        error: "Email already exists. Please sign in first."
-                    });
-                }
-
-                const hashed = await bcrypt.hash(password, 10);
-                const result = await run(`
-                    INSERT INTO users
-                    (name,email,password,store_name,portfolio_url,role,status,has_seen_approval)
-                    VALUES (?,?,?,?,?,?,?,?)
-                `, [
-                    name, email, hashed, storeName, portfolioUrl,
-                    "buyer", "pending", 0
-                ]);
-
-                req.session.userId = result.lastID;
-                req.session.role = "buyer";
-                req.session.status = "pending";
-                req.session.name = name;
-                req.session.email = email;
-
-                return res.json({ success: true, redirect: "pending.html" });
+            if (!name || !email || !password) {
+                deleteUploadedFiles(req);
+                return res.status(400).json({
+                    success: false,
+                    error: "Name, email, and password are required."
+                });
             }
 
-            await run(`
-                UPDATE users
-                SET store_name=?,
-                    portfolio_url=CASE WHEN ? <> '' THEN ? ELSE portfolio_url END,
-                    role='buyer',
-                    status='pending',
-                    has_seen_approval=0
-                WHERE id=?
-            `, [storeName, portfolioUrl, portfolioUrl, req.user.id]);
+            const existing = await get(`SELECT id FROM users WHERE email=?`, [email]);
+            if (existing) {
+                deleteUploadedFiles(req);
+                return res.status(400).json({
+                    success: false,
+                    error: "Email already exists. Please sign in first."
+                });
+            }
 
-            req.session.role = "buyer";
-            req.session.status = "pending";
+            const hashed = await bcrypt.hash(password, 10);
+            const result = await run(`
+                INSERT INTO users
+                (name,email,password,store_name,portfolio_url,role,status,has_seen_approval)
+                VALUES (?,?,?,?,?,?,?,?)
+            `, [
+                name, email, hashed, storeName, portfolioUrl,
+                "buyer", "pending", 0
+            ]);
 
-            res.json({ success: true, redirect: "pending.html" });
-        } catch (err) {
-            console.error("SELLER APPLICATION ERROR:", err);
+            await startSession(req, {
+                id: result.lastID,
+                role: "buyer",
+                status: "pending",
+                name,
+                email
+            });
+
+            return res.json({ success: true, redirect: "pending.html" });
+        }
+
+        // Existing sellers/admins must not be demoted by re-applying.
+        if (req.user.role === "seller" || req.user.role === "admin") {
             deleteUploadedFiles(req);
-            res.status(500).json({
+            return res.status(400).json({
                 success: false,
-                error: "Seller application failed."
+                error: "Your account already has seller access."
             });
         }
-    });
+
+        await run(`
+            UPDATE users
+            SET store_name=?,
+                portfolio_url=CASE WHEN ? <> '' THEN ? ELSE portfolio_url END,
+                role='buyer',
+                status='pending',
+                has_seen_approval=0
+            WHERE id=?
+        `, [storeName, portfolioUrl, portfolioUrl, req.user.id]);
+
+        req.session.role = "buyer";
+        req.session.status = "pending";
+
+        res.json({ success: true, redirect: "pending.html" });
+    } catch (err) {
+        console.error("SELLER APPLICATION ERROR:", err);
+        deleteUploadedFiles(req);
+        res.status(500).json({
+            success: false,
+            error: "Seller application failed."
+        });
+    }
 });
 
 app.post("/api/logout", (req, res) => {
     req.session.destroy(() => {
+        res.clearCookie("connect.sid");
         res.json({ success: true });
     });
 });
@@ -568,13 +873,11 @@ app.post("/api/mark-approval-seen", requireLogin, async (req, res) => {
     }
 });
 
-/* ADMIN */
+/* ------------------------------------------------------------------ */
+/* ADMIN                                                               */
+/* ------------------------------------------------------------------ */
 
-app.get("/api/admin/applications", requireLogin, async (req, res) => {
-    if (req.user.role !== "admin") {
-        return res.status(403).json({ error: "Unauthorized." });
-    }
-
+app.get("/api/admin/applications", requireAdmin, async (req, res) => {
     try {
         const rows = await all(`
             SELECT id,name,email,store_name,portfolio_url,status,role
@@ -589,11 +892,7 @@ app.get("/api/admin/applications", requireLogin, async (req, res) => {
     }
 });
 
-app.post("/api/admin/review-seller", requireLogin, async (req, res) => {
-    if (req.user.role !== "admin") {
-        return res.status(403).json({ success: false, error: "Unauthorized." });
-    }
-
+app.post("/api/admin/review-seller", requireAdmin, async (req, res) => {
     const userId = Number(req.body.userId);
     const decision = req.body.decision;
 
@@ -607,11 +906,19 @@ app.post("/api/admin/review-seller", requireLogin, async (req, res) => {
     try {
         const role = decision === "approved" ? "seller" : "buyer";
 
-        await run(`
+        // Only pending buyer applications can be reviewed (never touches admins).
+        const result = await run(`
             UPDATE users
             SET role=?, status=?, has_seen_approval=0
-            WHERE id=?
+            WHERE id=? AND role='buyer' AND status='pending'
         `, [role, decision, userId]);
+
+        if (result.changes !== 1) {
+            return res.status(404).json({
+                success: false,
+                error: "No pending application found for this user."
+            });
+        }
 
         res.json({ success: true });
     } catch {
@@ -622,7 +929,9 @@ app.post("/api/admin/review-seller", requireLogin, async (req, res) => {
     }
 });
 
-/* ARTWORK CATALOG */
+/* ------------------------------------------------------------------ */
+/* ARTWORK CATALOG                                                     */
+/* ------------------------------------------------------------------ */
 
 app.get("/api/artworks", async (req, res) => {
     try {
@@ -651,26 +960,8 @@ app.get("/api/artworks", async (req, res) => {
     }
 });
 
-app.get("/api/my-artworks", requireCreator, async (req, res) => {
-    try {
-        const rows = req.user.role === "admin"
-            ? await all("SELECT a.*, COALESCE(a.stock, 1) AS stock FROM artworks a ORDER BY a.id DESC")
-            : await all(
-                "SELECT a.*, COALESCE(a.stock, 1) AS stock FROM artworks a WHERE a.user_id = ? ORDER BY a.id DESC",
-                [req.user.id]
-            );
-
-        res.json(rows);
-    } catch (err) {
-        console.error("MY ARTWORKS ERROR:", err);
-        res.status(500).json({
-            success: false,
-            error: "Could not load your collection."
-        });
-    }
-});
-
-app.get("/api/seller/artworks", requireCreator, async (req, res) => {
+// One handler, two paths (kept so existing front-end code keeps working).
+async function listOwnArtworks(req, res) {
     try {
         const rows = req.user.role === "admin"
             ? await all(`
@@ -687,178 +978,193 @@ app.get("/api/seller/artworks", requireCreator, async (req, res) => {
 
         res.json(rows);
     } catch (err) {
-        console.error("SELLER ARTWORKS ERROR:", err);
-        res.status(500).json({ error: "Could not load your collection." });
+        console.error("OWN ARTWORKS ERROR:", err);
+        res.status(500).json({
+            success: false,
+            error: "Could not load your collection."
+        });
     }
-});
+}
 
-app.post("/api/artworks", requireCreator, (req, res) => {
-    upload.any()(req, res, async uploadErr => {
-        if (uploadErr) {
+app.get("/api/my-artworks", requireCreator, listOwnArtworks);
+app.get("/api/seller/artworks", requireCreator, listOwnArtworks);
+
+app.post("/api/artworks", requireCreator, imageUpload, async (req, res) => {
+    try {
+        const title = String(req.body.title || "").trim();
+        const artist = String(req.body.artist || req.user.name || "").trim();
+        const medium = String(req.body.medium || "").trim();
+
+        const priceRaw = req.body.price;
+        const stockRaw = req.body.stock;
+        const price = priceRaw === undefined || String(priceRaw).trim() === "" ? 0 : Number(priceRaw);
+        const stock = stockRaw === undefined || String(stockRaw).trim() === "" ? 1 : Number(stockRaw);
+
+        const file = req.files && req.files[0];
+        const imageUrl = file ? `/uploads/${file.filename}` : "";
+        const storeName = req.user.store_name || "Studio Gallery";
+
+        if (!title) {
+            deleteUploadedFiles(req);
             return res.status(400).json({
                 success: false,
-                error: "Image upload failed: " + uploadErr.message
+                error: "Title is required."
             });
         }
 
-        try {
-            const title = String(req.body.title || "").trim();
-            const artist = String(req.body.artist || req.user.name || "").trim();
-            const medium = String(req.body.medium || "").trim();
-            const price = Number(req.body.price || 0);
-            const stock = Math.max(0, Number(req.body.stock ?? 1));
-            const file = req.files && req.files[0];
-            const imageUrl = file ? `/uploads/${file.filename}` : "";
-            const storeName = req.user.store_name || "Studio Gallery";
-
-            if (!title) {
-                deleteUploadedFiles(req);
-                return res.status(400).json({
-                    success: false,
-                    error: "Title is required."
-                });
-            }
-
-            const result = await run(`
-                INSERT INTO artworks
-                (user_id,title,artist,store_name,medium,price,image_url,stock,created_at)
-                VALUES (?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
-            `, [
-                req.user.id, title, artist, storeName,
-                medium, price, imageUrl, stock
-            ]);
-
-            res.json({ success: true, artworkId: result.lastID });
-        } catch (err) {
-            console.error("CREATE ARTWORK ERROR:", err);
+        if (!Number.isFinite(price) || price < 0) {
             deleteUploadedFiles(req);
-            res.status(500).json({
+            return res.status(400).json({
                 success: false,
-                error: "Failed to add artwork."
+                error: "Price must be a valid non-negative number."
             });
         }
-    });
+
+        if (!Number.isInteger(stock) || stock < 0) {
+            deleteUploadedFiles(req);
+            return res.status(400).json({
+                success: false,
+                error: "Stock must be a whole number of 0 or greater."
+            });
+        }
+
+        const result = await run(`
+            INSERT INTO artworks
+            (user_id,title,artist,store_name,medium,price,image_url,stock,created_at)
+            VALUES (?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+        `, [
+            req.user.id, title, artist, storeName,
+            medium, price, imageUrl, stock
+        ]);
+
+        res.json({ success: true, artworkId: result.lastID });
+    } catch (err) {
+        console.error("CREATE ARTWORK ERROR:", err);
+        deleteUploadedFiles(req);
+        res.status(500).json({
+            success: false,
+            error: "Failed to add artwork."
+        });
+    }
 });
 
 /*
  * EDIT ARTWORK
  * Accepts JSON or multipart (when the seller replaces the image).
- * Medium is no longer required: older artworks with an empty medium
+ * Medium is not required: older artworks with an empty medium
  * used to be impossible to edit.
  */
-app.put("/api/artworks/:id", requireCreator, (req, res) => {
-    upload.any()(req, res, async uploadErr => {
-        if (uploadErr) {
+app.put("/api/artworks/:id", requireCreator, imageUpload, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+
+        if (!validId(id)) {
             deleteUploadedFiles(req);
             return res.status(400).json({
                 success: false,
-                error: "Image upload failed: " + uploadErr.message
+                error: "Invalid artwork ID."
             });
         }
 
-        try {
-            const id = Number(req.params.id);
+        const old = await get("SELECT * FROM artworks WHERE id = ?", [id]);
 
-            if (!Number.isInteger(id) || id <= 0) {
-                deleteUploadedFiles(req);
-                return res.status(400).json({
-                    success: false,
-                    error: "Invalid artwork ID."
-                });
-            }
-
-            const old = await get("SELECT * FROM artworks WHERE id = ?", [id]);
-
-            if (!old) {
-                deleteUploadedFiles(req);
-                return res.status(404).json({
-                    success: false,
-                    error: "Artwork not found."
-                });
-            }
-
-            if (req.user.role !== "admin" && Number(old.user_id) !== Number(req.user.id)) {
-                deleteUploadedFiles(req);
-                return res.status(403).json({
-                    success: false,
-                    error: "You can only edit your own artwork."
-                });
-            }
-
-            const body = req.body || {};
-
-            const title = String(body.title ?? old.title ?? "").trim();
-            const artist = String(body.artist ?? old.artist ?? req.user.name ?? "").trim();
-            const medium =
-                String(body.medium ?? "").trim() ||
-                String(old.medium || "").trim() ||
-                "Uncategorized";
-            const priceText = String(body.price ?? old.price ?? 0).trim();
-            const stockText = String(body.stock ?? old.stock ?? 1).trim();
-            const price = Number(priceText);
-            const stock = Number(stockText);
-
-            if (!title) {
-                deleteUploadedFiles(req);
-                return res.status(400).json({
-                    success: false,
-                    error: "Title is required."
-                });
-            }
-
-            if (priceText === "" || !Number.isFinite(price) || price < 0) {
-                deleteUploadedFiles(req);
-                return res.status(400).json({
-                    success: false,
-                    error: "Price must be a valid non-negative number."
-                });
-            }
-
-            if (stockText === "" || !Number.isInteger(stock) || stock < 0) {
-                deleteUploadedFiles(req);
-                return res.status(400).json({
-                    success: false,
-                    error: "Stock must be a whole number of 0 or greater."
-                });
-            }
-
-            const file = Array.isArray(req.files) ? req.files[0] : null;
-            const imageUrl = file ? `/uploads/${file.filename}` : (old.image_url || "");
-
-            await run(`
-                UPDATE artworks
-                SET title=?, artist=?, medium=?, price=?, stock=?, image_url=?
-                WHERE id=?
-            `, [title, artist, medium, price, stock, imageUrl, id]);
-
-            if (file && old.image_url && old.image_url.startsWith("/uploads/")) {
-                const oldFile = path.join(uploadDir, path.basename(old.image_url));
-                if (fs.existsSync(oldFile)) {
-                    fs.unlink(oldFile, err => {
-                        if (err) console.error("Could not delete old image:", err.message);
-                    });
-                }
-            }
-
-            return res.json({
-                success: true,
-                message: "Artwork updated successfully.",
-                artwork: { id, title, artist, medium, price, stock, image_url: imageUrl }
-            });
-        } catch (err) {
-            console.error("EDIT ARTWORK ERROR:", err);
+        if (!old) {
             deleteUploadedFiles(req);
-            return res.status(500).json({
+            return res.status(404).json({
                 success: false,
-                error: "Failed to update artwork."
+                error: "Artwork not found."
             });
         }
-    });
+
+        if (req.user.role !== "admin" && Number(old.user_id) !== Number(req.user.id)) {
+            deleteUploadedFiles(req);
+            return res.status(403).json({
+                success: false,
+                error: "You can only edit your own artwork."
+            });
+        }
+
+        const body = req.body || {};
+
+        const title = String(body.title ?? old.title ?? "").trim();
+        const artist = String(body.artist ?? old.artist ?? req.user.name ?? "").trim();
+        const medium =
+            String(body.medium ?? "").trim() ||
+            String(old.medium || "").trim() ||
+            "Uncategorized";
+        const priceText = String(body.price ?? old.price ?? 0).trim();
+        const stockText = String(body.stock ?? old.stock ?? 1).trim();
+        const price = Number(priceText);
+        const stock = Number(stockText);
+
+        if (!title) {
+            deleteUploadedFiles(req);
+            return res.status(400).json({
+                success: false,
+                error: "Title is required."
+            });
+        }
+
+        if (priceText === "" || !Number.isFinite(price) || price < 0) {
+            deleteUploadedFiles(req);
+            return res.status(400).json({
+                success: false,
+                error: "Price must be a valid non-negative number."
+            });
+        }
+
+        if (stockText === "" || !Number.isInteger(stock) || stock < 0) {
+            deleteUploadedFiles(req);
+            return res.status(400).json({
+                success: false,
+                error: "Stock must be a whole number of 0 or greater."
+            });
+        }
+
+        const file = Array.isArray(req.files) ? req.files[0] : null;
+        const imageUrl = file ? `/uploads/${file.filename}` : (old.image_url || "");
+
+        await run(`
+            UPDATE artworks
+            SET title=?, artist=?, medium=?, price=?, stock=?, image_url=?
+            WHERE id=?
+        `, [title, artist, medium, price, stock, imageUrl, id]);
+
+        if (file && old.image_url && old.image_url.startsWith("/uploads/")) {
+            const oldFile = path.join(uploadDir, path.basename(old.image_url));
+            if (fs.existsSync(oldFile)) {
+                fs.unlink(oldFile, err => {
+                    if (err) console.error("Could not delete old image:", err.message);
+                });
+            }
+        }
+
+        return res.json({
+            success: true,
+            message: "Artwork updated successfully.",
+            artwork: { id, title, artist, medium, price, stock, image_url: imageUrl }
+        });
+    } catch (err) {
+        console.error("EDIT ARTWORK ERROR:", err);
+        deleteUploadedFiles(req);
+        return res.status(500).json({
+            success: false,
+            error: "Failed to update artwork."
+        });
+    }
 });
 
 app.delete("/api/artworks/:id", requireCreator, async (req, res) => {
     try {
         const id = Number(req.params.id);
+
+        if (!validId(id)) {
+            return res.status(400).json({
+                success: false,
+                error: "Invalid artwork ID."
+            });
+        }
+
         const old = await get(`SELECT * FROM artworks WHERE id=?`, [id]);
 
         if (!old) {
@@ -868,14 +1174,17 @@ app.delete("/api/artworks/:id", requireCreator, async (req, res) => {
             });
         }
 
-        if (req.user.role !== "admin" && old.user_id !== req.user.id) {
+        if (req.user.role !== "admin" && Number(old.user_id) !== Number(req.user.id)) {
             return res.status(403).json({
                 success: false,
                 error: "You can only delete your own artwork."
             });
         }
 
-        await run(`DELETE FROM artworks WHERE id=?`, [id]);
+        await transaction(async () => {
+            await run(`DELETE FROM cart_items WHERE artwork_id=?`, [id]);
+            await run(`DELETE FROM artworks WHERE id=?`, [id]);
+        });
 
         if (old.image_url && old.image_url.startsWith("/uploads/")) {
             const file = path.join(uploadDir, path.basename(old.image_url));
@@ -892,7 +1201,9 @@ app.delete("/api/artworks/:id", requireCreator, async (req, res) => {
     }
 });
 
-/* CART */
+/* ------------------------------------------------------------------ */
+/* CART                                                                */
+/* ------------------------------------------------------------------ */
 
 app.get("/api/cart", requireLogin, async (req, res) => {
     try {
@@ -924,7 +1235,19 @@ app.get("/api/cart", requireLogin, async (req, res) => {
 app.post("/api/cart", requireLogin, async (req, res) => {
     try {
         const artworkId = Number(req.body.artworkId);
-        const quantity = Math.max(1, Number(req.body.quantity || 1));
+        const quantityRaw = req.body.quantity === undefined || req.body.quantity === ""
+            ? 1
+            : Number(req.body.quantity);
+
+        if (!validId(artworkId)) {
+            return res.status(400).json({ error: "Invalid artwork." });
+        }
+
+        if (!Number.isInteger(quantityRaw) || quantityRaw < 1) {
+            return res.status(400).json({ error: "Quantity must be a whole number of 1 or more." });
+        }
+
+        const quantity = quantityRaw;
 
         const artwork = await get(
             `SELECT id,stock FROM artworks WHERE id=?`,
@@ -990,18 +1313,22 @@ app.patch("/api/cart/:id", requireLogin, async (req, res) => {
             return res.status(404).json({ error: "Cart item not found." });
         }
 
+        if (!Number.isInteger(quantity)) {
+            return res.status(400).json({ error: "Quantity must be a whole number." });
+        }
+
         if (quantity <= 0) {
-            await run(`DELETE FROM cart_items WHERE id=?`, [id]);
+            await run(`DELETE FROM cart_items WHERE id=? AND user_id=?`, [id, req.user.id]);
             return res.json({ success: true });
         }
 
-        if (!Number.isInteger(quantity) || quantity > Number(item.stock)) {
+        if (quantity > Number(item.stock)) {
             return res.status(400).json({
                 error: `Only ${item.stock} item(s) available.`
             });
         }
 
-        await run(`UPDATE cart_items SET quantity=? WHERE id=?`, [quantity, id]);
+        await run(`UPDATE cart_items SET quantity=? WHERE id=? AND user_id=?`, [quantity, id, req.user.id]);
         res.json({ success: true });
     } catch (err) {
         console.error("CART UPDATE ERROR:", err);
@@ -1022,7 +1349,9 @@ app.delete("/api/cart/:id", requireLogin, async (req, res) => {
     }
 });
 
-/* CHECKOUT */
+/* ------------------------------------------------------------------ */
+/* CHECKOUT                                                            */
+/* ------------------------------------------------------------------ */
 
 app.post("/api/checkout", requireLogin, async (req, res) => {
     try {
@@ -1040,125 +1369,153 @@ app.post("/api/checkout", requireLogin, async (req, res) => {
             });
         }
 
-        const cart = await all(`
-            SELECT
-                c.artwork_id,
-                c.quantity,
-                a.title,
-                a.price,
-                a.stock,
-                a.user_id AS seller_id
-            FROM cart_items c
-            JOIN artworks a ON a.id=c.artwork_id
-            WHERE c.user_id=?
-        `, [req.user.id]);
+        // The cart is read INSIDE the transaction, so what we validate is
+        // exactly what we charge for and what we take out of stock.
+        const orderId = await transaction(async () => {
+            const cart = await all(`
+                SELECT
+                    c.artwork_id,
+                    c.quantity,
+                    a.title,
+                    a.price,
+                    a.stock,
+                    a.user_id AS seller_id
+                FROM cart_items c
+                JOIN artworks a ON a.id=c.artwork_id
+                WHERE c.user_id=?
+            `, [req.user.id]);
 
-        if (!cart.length) {
-            return res.status(400).json({
-                success: false,
-                error: "Your cart is empty."
-            });
-        }
-
-        for (const item of cart) {
-            if (Number(item.quantity) > Number(item.stock)) {
-                return res.status(400).json({
-                    success: false,
-                    error: `"${item.title}" does not have enough stock.`
-                });
+            if (!cart.length) {
+                throw new HttpError(400, "Your cart is empty.");
             }
-        }
 
-        const total = cart.reduce(
-            (sum, item) => sum + Number(item.price || 0) * Number(item.quantity),
-            0
-        );
+            for (const item of cart) {
+                if (Number(item.quantity) > Number(item.stock)) {
+                    throw new HttpError(400, `"${item.title}" does not have enough stock.`);
+                }
+            }
 
-        const orderId = await withLock(async () => {
-            await run("BEGIN TRANSACTION");
+            const total = cart.reduce(
+                (sum, item) => sum + Number(item.price || 0) * Number(item.quantity),
+                0
+            );
 
-            try {
-                const order = await run(`
-                    INSERT INTO orders
-                    (buyer_id,total,full_name,email,contact_number,address,country,payment_method,status)
-                    VALUES (?,?,?,?,?,?,?,?,?)
+            const order = await run(`
+                INSERT INTO orders
+                (buyer_id,total,full_name,email,contact_number,address,country,payment_method,status)
+                VALUES (?,?,?,?,?,?,?,?,?)
+            `, [
+                req.user.id,
+                total,
+                fullName,
+                email,
+                contactNumber,
+                address,
+                country,
+                paymentMethod,
+                "Pending"
+            ]);
+
+            for (const item of cart) {
+                const subtotal = Number(item.price || 0) * Number(item.quantity);
+
+                await run(`
+                    INSERT INTO order_items
+                    (order_id,artwork_id,seller_id,title,price,quantity,subtotal,status)
+                    VALUES (?,?,?,?,?,?,?,?)
                 `, [
-                    req.user.id,
-                    total,
-                    fullName,
-                    email,
-                    contactNumber,
-                    address,
-                    country,
-                    paymentMethod,
+                    order.lastID,
+                    item.artwork_id,
+                    item.seller_id,
+                    item.title,
+                    item.price,
+                    item.quantity,
+                    subtotal,
                     "Pending"
                 ]);
 
-                for (const item of cart) {
-                    const subtotal = Number(item.price || 0) * Number(item.quantity);
+                const stockUpdate = await run(`
+                    UPDATE artworks
+                    SET stock=stock-?
+                    WHERE id=? AND stock>=?
+                `, [item.quantity, item.artwork_id, item.quantity]);
 
-                    await run(`
-                        INSERT INTO order_items
-                        (order_id,artwork_id,seller_id,title,price,quantity,subtotal)
-                        VALUES (?,?,?,?,?,?,?)
-                    `, [
-                        order.lastID,
-                        item.artwork_id,
-                        item.seller_id,
-                        item.title,
-                        item.price,
-                        item.quantity,
-                        subtotal
-                    ]);
-
-                    const stockUpdate = await run(`
-                        UPDATE artworks
-                        SET stock=stock-?
-                        WHERE id=? AND stock>=?
-                    `, [item.quantity, item.artwork_id, item.quantity]);
-
-                    if (stockUpdate.changes !== 1) {
-                        throw new Error(`Insufficient stock for "${item.title}".`);
-                    }
-
-                    /*
-                     * Notify the seller. Older artworks may have no seller
-                     * (user_id is NULL); the notifications table requires a
-                     * user_id, so skip those instead of failing the order.
-                     */
-                    if (item.seller_id) {
-                        await run(`
-                            INSERT INTO notifications(user_id,order_id,message)
-                            VALUES(?,?,?)
-                        `, [
-                            item.seller_id,
-                            order.lastID,
-                            `🛒 New order #${order.lastID}: ${item.quantity} × "${item.title}" ordered by ${fullName} (${country}).`
-                        ]);
-                    }
+                if (stockUpdate.changes !== 1) {
+                    throw new HttpError(400, `Insufficient stock for "${item.title}".`);
                 }
 
-                await run(`DELETE FROM cart_items WHERE user_id=?`, [req.user.id]);
-                await run("COMMIT");
-
-                return order.lastID;
-            } catch (err) {
-                await run("ROLLBACK").catch(() => {});
-                throw err;
+                /*
+                 * Notify the seller. Older artworks may have no seller
+                 * (user_id is NULL); the notifications table requires a
+                 * user_id, so skip those instead of failing the order.
+                 */
+                if (item.seller_id) {
+                    await run(`
+                        INSERT INTO notifications(user_id,order_id,message)
+                        VALUES(?,?,?)
+                    `, [
+                        item.seller_id,
+                        order.lastID,
+                        `🛒 New order #${order.lastID}: ${item.quantity} × "${item.title}" ordered by ${fullName} (${country}).`
+                    ]);
+                }
             }
+
+            await run(`DELETE FROM cart_items WHERE user_id=?`, [req.user.id]);
+
+            return order.lastID;
         });
 
         res.json({ success: true, orderId });
     } catch (err) {
-        console.error("CHECKOUT ERROR:", err);
-        res.status(400).json({
-            success: false,
-            error: err.message || "Checkout failed."
-        });
+        sendError(res, err, "CHECKOUT ERROR", "Checkout failed.");
     }
 });
 
-/* SELLER ORDERS */
+/* ------------------------------------------------------------------ */
+/* ORDERS                                                              */
+/* ------------------------------------------------------------------ */
+
+// Buyer order history (new).
+app.get("/api/orders/mine", requireLogin, async (req, res) => {
+    try {
+        const orders = await all(`
+            SELECT id,total,full_name,email,contact_number,address,country,
+                   payment_method,status,created_at
+            FROM orders
+            WHERE buyer_id=?
+            ORDER BY id DESC
+        `, [req.user.id]);
+
+        const items = await all(`
+            SELECT
+                oi.order_id,
+                oi.artwork_id,
+                oi.title,
+                oi.price,
+                oi.quantity,
+                oi.subtotal,
+                COALESCE(oi.status,'Pending') AS status,
+                a.image_url
+            FROM order_items oi
+            JOIN orders o ON o.id=oi.order_id
+            LEFT JOIN artworks a ON a.id=oi.artwork_id
+            WHERE o.buyer_id=?
+            ORDER BY oi.id ASC
+        `, [req.user.id]);
+
+        const byOrder = new Map(orders.map(o => [o.id, { ...o, items: [] }]));
+        for (const item of items) {
+            const order = byOrder.get(item.order_id);
+            if (order) order.items.push(item);
+        }
+
+        res.json([...byOrder.values()]);
+    } catch (err) {
+        console.error("MY ORDERS ERROR:", err);
+        res.status(500).json({ error: "Could not load your orders." });
+    }
+});
 
 app.get("/api/orders/seller", requireCreator, async (req, res) => {
     try {
@@ -1168,6 +1525,8 @@ app.get("/api/orders/seller", requireCreator, async (req, res) => {
         const rows = await all(`
             SELECT
                 o.id AS order_id,
+                oi.id AS order_item_id,
+                oi.seller_id,
                 oi.artwork_id,
                 oi.title,
                 oi.quantity,
@@ -1179,7 +1538,7 @@ app.get("/api/orders/seller", requireCreator, async (req, res) => {
                 o.address,
                 o.country,
                 o.payment_method,
-                o.status AS order_status,
+                COALESCE(oi.status, o.status) AS order_status,
                 o.created_at
             FROM order_items oi
             JOIN orders o ON o.id=oi.order_id
@@ -1194,6 +1553,11 @@ app.get("/api/orders/seller", requireCreator, async (req, res) => {
     }
 });
 
+/*
+ * Status is tracked per order ITEM, so a seller only changes their own
+ * items in a mixed order. The order's overall status is derived from its items.
+ * Cancelling puts the stock back; re-opening a cancelled item takes it again.
+ */
 app.patch("/api/orders/:id/status", requireCreator, async (req, res) => {
     try {
         const orderId = Number(req.params.id);
@@ -1214,34 +1578,79 @@ app.patch("/api/orders/:id/status", requireCreator, async (req, res) => {
             });
         }
 
-        if (req.user.role !== "admin") {
-            const owned = await get(`
-                SELECT oi.id
-                FROM order_items oi
-                WHERE oi.order_id=? AND oi.seller_id=?
-                LIMIT 1
-            `, [orderId, req.user.id]);
+        await transaction(async () => {
+            const items = req.user.role === "admin"
+                ? await all(`
+                    SELECT id,artwork_id,title,quantity,COALESCE(status,'Pending') AS status
+                    FROM order_items
+                    WHERE order_id=?
+                `, [orderId])
+                : await all(`
+                    SELECT id,artwork_id,title,quantity,COALESCE(status,'Pending') AS status
+                    FROM order_items
+                    WHERE order_id=? AND seller_id=?
+                `, [orderId, req.user.id]);
 
-            if (!owned) {
-                return res.status(403).json({
-                    success: false,
-                    error: "You cannot update this order."
-                });
+            if (!items.length) {
+                throw new HttpError(403, "You cannot update this order.");
             }
-        }
 
-        await run(`UPDATE orders SET status=? WHERE id=?`, [status, orderId]);
+            for (const item of items) {
+                if (item.status === status) continue;
+
+                if (status === "Cancelled" && item.artwork_id) {
+                    await run(
+                        `UPDATE artworks SET stock=COALESCE(stock,0)+? WHERE id=?`,
+                        [item.quantity, item.artwork_id]
+                    );
+                }
+
+                if (item.status === "Cancelled" && item.artwork_id) {
+                    const art = await get(`SELECT stock FROM artworks WHERE id=?`, [item.artwork_id]);
+
+                    // If the artwork was deleted meanwhile there is no stock to take back.
+                    if (art) {
+                        const take = await run(
+                            `UPDATE artworks SET stock=stock-? WHERE id=? AND stock>=?`,
+                            [item.quantity, item.artwork_id, item.quantity]
+                        );
+                        if (take.changes !== 1) {
+                            throw new HttpError(
+                                400,
+                                `Cannot re-open: not enough stock left for "${item.title}".`
+                            );
+                        }
+                    }
+                }
+
+                await run(`UPDATE order_items SET status=? WHERE id=?`, [status, item.id]);
+            }
+
+            // Derive the overall order status from all of its items.
+            const all_items = await all(
+                `SELECT COALESCE(status,'Pending') AS status FROM order_items WHERE order_id=?`,
+                [orderId]
+            );
+            const active = [...new Set(all_items.map(i => i.status).filter(s => s !== "Cancelled"))];
+
+            let overall;
+            if (!all_items.length) overall = status;
+            else if (!active.length) overall = "Cancelled";
+            else if (active.length === 1) overall = active[0];
+            else overall = "Processing";
+
+            await run(`UPDATE orders SET status=? WHERE id=?`, [overall, orderId]);
+        });
+
         res.json({ success: true });
     } catch (err) {
-        console.error("ORDER STATUS ERROR:", err);
-        res.status(500).json({
-            success: false,
-            error: "Could not update order."
-        });
+        sendError(res, err, "ORDER STATUS ERROR", "Could not update order.");
     }
 });
 
-/* MESSAGES */
+/* ------------------------------------------------------------------ */
+/* MESSAGES                                                            */
+/* ------------------------------------------------------------------ */
 
 app.get("/api/messages/unread-count", requireLogin, async (req, res) => {
     try {
@@ -1334,9 +1743,10 @@ app.get("/api/messages/:otherUserId", requireLogin, async (req, res) => {
 app.post("/api/messages", requireLogin, async (req, res) => {
     try {
         const receiverId = Number(req.body.receiverId);
-        const artworkId = req.body.artworkId
-            ? Number(req.body.artworkId)
-            : null;
+        const hasArtwork = req.body.artworkId !== undefined &&
+            req.body.artworkId !== null &&
+            String(req.body.artworkId).trim() !== "";
+        const artworkId = hasArtwork ? Number(req.body.artworkId) : null;
         const message = String(req.body.message || "").trim();
 
         if (!validId(receiverId) || !message) {
@@ -1365,6 +1775,23 @@ app.post("/api/messages", requireLogin, async (req, res) => {
             });
         }
 
+        if (hasArtwork) {
+            if (!validId(artworkId)) {
+                return res.status(400).json({
+                    success: false,
+                    error: "Invalid artwork."
+                });
+            }
+
+            const artwork = await get(`SELECT id FROM artworks WHERE id=?`, [artworkId]);
+            if (!artwork) {
+                return res.status(404).json({
+                    success: false,
+                    error: "Artwork not found."
+                });
+            }
+        }
+
         const result = await run(`
             INSERT INTO messages
             (sender_id,receiver_id,artwork_id,message)
@@ -1389,7 +1816,9 @@ app.post("/api/messages", requireLogin, async (req, res) => {
     }
 });
 
-/* NOTIFICATIONS */
+/* ------------------------------------------------------------------ */
+/* NOTIFICATIONS                                                       */
+/* ------------------------------------------------------------------ */
 
 app.get("/api/notifications/unread-count", requireLogin, async (req, res) => {
     try {
@@ -1439,7 +1868,9 @@ app.post("/api/notifications/read", requireLogin, async (req, res) => {
     }
 });
 
-/* ADMIN DATABASE VIEWER */
+/* ------------------------------------------------------------------ */
+/* ADMIN DATABASE VIEWER                                               */
+/* ------------------------------------------------------------------ */
 
 const DB_TABLES = ["users", "artworks", "orders", "order_items", "cart_items", "messages", "notifications"];
 const HIDDEN_COLUMNS = { users: ["password"] };       // never sent to the browser
@@ -1569,53 +2000,59 @@ app.delete("/api/admin/db/row/:table/:id", requireAdmin, async (req, res) => {
         }
         if (!validId(id)) return res.status(400).json({ success: false, error: "Invalid ID." });
 
-        if (table === "users") {
-            if (id === req.user.id) {
-                return res.status(400).json({ success: false, error: "You cannot delete your own account." });
-            }
-            const target = await get(`SELECT id,role FROM users WHERE id=?`, [id]);
-            if (!target) return res.status(404).json({ success: false, error: "User not found." });
-            if (target.role === "admin") {
-                return res.status(400).json({ success: false, error: "Admin accounts cannot be deleted." });
-            }
+        let imageToRemove = null;
 
-            const art = await get(`SELECT COUNT(*) AS c FROM artworks WHERE user_id=?`, [id]);
-            const ord = await get(`SELECT COUNT(*) AS c FROM orders WHERE buyer_id=?`, [id]);
-            if (Number(art.c) > 0 || Number(ord.c) > 0) {
-                return res.status(400).json({
-                    success: false,
-                    error: "This user still has artworks or orders. Delete their artworks first; orders are kept as records."
-                });
-            }
+        // Every delete runs inside the lock + a transaction so it can never
+        // interleave with a checkout.
+        await transaction(async () => {
+            if (table === "users") {
+                if (id === req.user.id) {
+                    throw new HttpError(400, "You cannot delete your own account.");
+                }
 
-            await withLock(async () => {
+                const target = await get(`SELECT id,role FROM users WHERE id=?`, [id]);
+                if (!target) throw new HttpError(404, "User not found.");
+                if (target.role === "admin") {
+                    throw new HttpError(400, "Admin accounts cannot be deleted.");
+                }
+
+                const art = await get(`SELECT COUNT(*) AS c FROM artworks WHERE user_id=?`, [id]);
+                const ord = await get(`SELECT COUNT(*) AS c FROM orders WHERE buyer_id=?`, [id]);
+                if (Number(art.c) > 0 || Number(ord.c) > 0) {
+                    throw new HttpError(
+                        400,
+                        "This user still has artworks or orders. Delete their artworks first; orders are kept as records."
+                    );
+                }
+
                 await run(`DELETE FROM cart_items WHERE user_id=?`, [id]);
                 await run(`DELETE FROM messages WHERE sender_id=? OR receiver_id=?`, [id, id]);
                 await run(`DELETE FROM notifications WHERE user_id=?`, [id]);
                 await run(`DELETE FROM users WHERE id=?`, [id]);
-            });
-            return res.json({ success: true });
-        }
-
-        if (table === "artworks") {
-            const old = await get(`SELECT image_url FROM artworks WHERE id=?`, [id]);
-            if (!old) return res.status(404).json({ success: false, error: "Artwork not found." });
-
-            await run(`DELETE FROM cart_items WHERE artwork_id=?`, [id]);
-            await run(`DELETE FROM artworks WHERE id=?`, [id]);
-
-            if (old.image_url && old.image_url.startsWith("/uploads/")) {
-                const file = path.join(uploadDir, path.basename(old.image_url));
-                if (fs.existsSync(file)) fs.unlink(file, () => {});
+                return;
             }
-            return res.json({ success: true });
+
+            if (table === "artworks") {
+                const old = await get(`SELECT image_url FROM artworks WHERE id=?`, [id]);
+                if (!old) throw new HttpError(404, "Artwork not found.");
+
+                await run(`DELETE FROM cart_items WHERE artwork_id=?`, [id]);
+                await run(`DELETE FROM artworks WHERE id=?`, [id]);
+                imageToRemove = old.image_url;
+                return;
+            }
+
+            await run(`DELETE FROM "${table}" WHERE id=?`, [id]);
+        });
+
+        if (imageToRemove && imageToRemove.startsWith("/uploads/")) {
+            const file = path.join(uploadDir, path.basename(imageToRemove));
+            if (fs.existsSync(file)) fs.unlink(file, () => {});
         }
 
-        await run(`DELETE FROM "${table}" WHERE id=?`, [id]);
         res.json({ success: true });
     } catch (err) {
-        console.error("DB DELETE ERROR:", err);
-        res.status(500).json({ success: false, error: "Could not delete this row." });
+        sendError(res, err, "DB DELETE ERROR", "Could not delete this row.");
     }
 });
 
@@ -1624,7 +2061,7 @@ app.patch("/api/admin/users/:id", requireAdmin, async (req, res) => {
         const id = Number(req.params.id);
         if (!validId(id)) return res.status(400).json({ success: false, error: "Invalid user ID." });
 
-        const target = await get(`SELECT id,role,email FROM users WHERE id=?`, [id]);
+        const target = await get(`SELECT id,role,email,status FROM users WHERE id=?`, [id]);
         if (!target) return res.status(404).json({ success: false, error: "User not found." });
         if (target.role === "admin" || target.email === ADMIN_EMAIL) {
             return res.status(400).json({ success: false, error: "Admin accounts cannot be changed here." });
@@ -1641,8 +2078,7 @@ app.patch("/api/admin/users/:id", requireAdmin, async (req, res) => {
         }
 
         if (status === undefined) {
-            const current = await get(`SELECT status FROM users WHERE id=?`, [id]);
-            status = role === "seller" ? "approved" : current.status;
+            status = role === "seller" ? "approved" : target.status;
         }
 
         await run(
@@ -1656,7 +2092,9 @@ app.patch("/api/admin/users/:id", requireAdmin, async (req, res) => {
     }
 });
 
-/* API FALLBACK */
+/* ------------------------------------------------------------------ */
+/* API FALLBACK & ERROR HANDLER                                        */
+/* ------------------------------------------------------------------ */
 
 app.use("/api", (req, res) => {
     res.status(404).json({
@@ -1665,22 +2103,30 @@ app.use("/api", (req, res) => {
     });
 });
 
-/* ERROR HANDLER */
-
 app.use((err, req, res, next) => {
-    console.error("SERVER ERROR:", err);
-
     if (res.headersSent) {
         return next(err);
     }
 
+    // Malformed JSON / oversized body etc. are the client's fault, not a 500.
+    const status = Number(err && err.status);
+    if (status >= 400 && status < 500) {
+        return res.status(status).json({
+            success: false,
+            error: "Invalid request."
+        });
+    }
+
+    console.error("SERVER ERROR:", err);
     res.status(500).json({
         success: false,
         error: "An unexpected server error occurred."
     });
 });
 
-/* START SERVER */
+/* ------------------------------------------------------------------ */
+/* START SERVER                                                        */
+/* ------------------------------------------------------------------ */
 
 initializeDatabase()
     .then(() => {
