@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Database — Admin — salaksak.art.net</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-50 min-h-screen font-sans text-slate-800">
+
+    <header class="bg-white border-b border-slate-200 sticky top-0 z-40">
+        <div class="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+            <span class="text-xl font-bold tracking-tight text-slate-900">
+                salaksak<span class="text-rose-600">.database</span>
+                <span class="ml-2 text-[10px] font-black uppercase tracking-wider bg-slate-900 text-white px-2 py-1 rounded-full align-middle">Admin only</span>
+            </span>
+            <div class="flex items-center gap-4 text-sm font-medium text-slate-600">
+                <a href="dashboard.html" class="hover:text-slate-950">Studio</a>
+                <a href="index.html" class="hover:text-slate-950">Gallery</a>
+                <button id="logout-btn" type="button" class="bg-slate-900 text-white px-4 py-2 rounded-lg text-sm hover:bg-slate-800">Logout</button>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-6 py-8 space-y-6">
+
+        <!-- Info / backup -->
+        <section class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div class="text-sm">
+                <h1 class="text-xl font-bold text-slate-900">Database</h1>
+                <p class="text-slate-500 mt-1">
+                    SQLite file: <b id="db-size">…</b> · stored in <code id="db-dir" class="bg-slate-100 px-1.5 py-0.5 rounded text-xs">…</code>
+                </p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+                <button id="refresh-btn" type="button" class="border border-slate-300 bg-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-slate-50">↻ Refresh</button>
+                <a href="/api/admin/db/backup" class="bg-rose-600 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-rose-700">⬇ Download full backup (.sqlite)</a>
+            </div>
+        </section>
+
+        <div class="bg-amber-50 border border-amber-200 text-amber-900 text-xs rounded-xl px-4 py-3 leading-relaxed">
+            <b>Heads-up:</b> if your host has no persistent disk (for example Render's free plan), this database is erased on every
+            redeploy or restart. Download a backup regularly. The backup contains password hashes — keep it private.
+        </div>
+
+        <!-- Table cards -->
+        <section id="cards" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3"></section>
+
+        <!-- Viewer -->
+        <section class="bg-white border border-slate-200 rounded-2xl shadow-sm">
+            <div class="p-5 border-b border-slate-200 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                <h2 id="table-title" class="text-lg font-bold">Select a table</h2>
+                <div class="flex flex-wrap items-center gap-2">
+                    <input id="search" placeholder="Search this table..." class="border border-slate-300 rounded-xl px-4 py-2 text-sm w-56">
+                    <select id="page-size" class="border border-slate-300 rounded-xl px-3 py-2 text-sm">
+                        <option value="10">10 / page</option>
+                        <option value="25" selected>25 / page</option>
+                        <option value="50">50 / page</option>
+                        <option value="100">100 / page</option>
+                    </select>
+                    <a id="export-link" href="#" class="hidden border border-slate-300 bg-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-slate-50">⬇ CSV</a>
+                </div>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="min-w-full text-sm">
+                    <thead id="thead" class="bg-slate-50 text-xs uppercase tracking-wider text-slate-500"></thead>
+                    <tbody id="tbody" class="divide-y divide-slate-100"></tbody>
+                </table>
+            </div>
+
+            <div class="p-4 border-t border-slate-200 flex items-center justify-between text-sm">
+                <span id="range-info" class="text-slate-500"></span>
+                <div class="flex items-center gap-2">
+                    <button id="prev-btn" type="button" class="border border-slate-300 rounded-lg px-3 py-1.5 font-bold disabled:opacity-40">← Prev</button>
+                    <span id="page-info" class="text-slate-600 font-semibold"></span>
+                    <button id="next-btn" type="button" class="border border-slate-300 rounded-lg px-3 py-1.5 font-bold disabled:opacity-40">Next →</button>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        'use strict';
+
+        const META = {
+            users:         { icon: '👤', label: 'Users' },
+            artworks:      { icon: '🖼️', label: 'Artworks' },
+            orders:        { icon: '🧾', label: 'Orders' },
+            order_items:   { icon: '📦', label: 'Order items' },
+            cart_items:    { icon: '🛒', label: 'Cart items' },
+            messages:      { icon: '💬', label: 'Messages' },
+            notifications: { icon: '🔔', label: 'Notifications' }
+        };
+        const ORDER_STATUSES = ['Pending', 'Processing', 'Shipped', 'Completed', 'Cancelled'];
+
+        const state = { table: null, page: 1, limit: 25, q: '', sort: 'id', dir: 'desc', data: null };
+
+        const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+        async function api(url, opts = {}) {
+            const res = await fetch(url, { credentials: 'same-origin', ...opts });
+            const ct = res.headers.get('content-type') || '';
+            if (!ct.includes('application/json')) {
+                throw new Error('The server did not return JSON (status ' + res.status +
+                    '). Open this page through your website address, not a local file.');
+            }
+            const data = await res.json();
+            if (!res.ok || data.success === false) throw new Error(data.error || 'Request failed (' + res.status + ').');
+            return data;
+        }
+
+        function fmtBytes(n) {
+            if (n < 1024) return n + ' B';
+            if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+            return (n / 1048576).toFixed(2) + ' MB';
+        }
+
+        function imgSrc(url) {
+            let s = String(url).trim();
+            if (s.includes('\\uploads\\')) s = '/uploads/' + s.split('\\uploads\\').pop();
+            if (s.startsWith('uploads/')) s = '/' + s;
+            if (!s.startsWith('/') && !s.startsWith('http')) s = '/uploads/' + s;
+            return s;
+        }
+
+        /* ---------- overview cards ---------- */
+        async function loadOverview() {
+            const o = await api('/api/admin/db/overview');
+            document.getElementById('db-size').textContent = fmtBytes(o.dbSize);
+            document.getElementById('db-dir').textContent = o.dataDir;
+
+            document.getElementById('cards').innerHTML = o.tables.map(t => {
+                const m = META[t.name] || { icon: '🗂️', label: t.name };
+                const on = t.name === state.table;
+                return `<button type="button" data-table="${esc(t.name)}"
+                    class="text-left rounded-2xl border p-4 transition ${on ? 'border-rose-500 bg-rose-50' : 'border-slate-200 bg-white hover:border-rose-300'}">
+                    <div class="text-2xl">${m.icon}</div>
+                    <div class="text-xs font-bold text-slate-500 mt-1">${esc(m.label)}</div>
+                    <div class="text-2xl font-black text-slate-900">${t.count}</div>
+                </button>`;
+            }).join('');
+        }
+
+        document.getElementById('cards').addEventListener('click', e => {
+            const b = e.target.closest('button[data-table]');
+            if (!b) return;
+            openTable(b.dataset.table);
+        });
+
+        /* ---------- table viewer ---------- */
+        function openTable(name) {
+            state.table = name; state.page = 1; state.q = ''; state.sort = 'id'; state.dir = 'desc';
+            document.getElementById('search').value = '';
+            loadTable();
+            loadOverview().catch(() => {});
+        }
+
+        async function loadTable() {
+            if (!state.table) return;
+            const body = document.getElementById('tbody');
+            const qs = new URLSearchParams({
+                page: state.page, limit: state.limit, q: state.q, sort: state.sort, dir: state.dir
+            });
+            try {
+                const d = await api(`/api/admin/db/table/${encodeURIComponent(state.table)}?` + qs);
+                state.data = d;
+                state.sort = d.sort; state.dir = d.dir;
+                renderTable(d);
+            } catch (err) {
+                body.innerHTML = `<tr><td class="p-6 text-rose-600">${esc(err.message)}</td></tr>`;
+            }
+        }
+
+        function cell(col, value) {
+            if (value === null || value === undefined || value === '') return '<span class="text-slate-300">—</span>';
+            if (col === 'image_url') {
+                const src = esc(imgSrc(value));
+                return `<a href="${src}" target="_blank" rel="noopener"><img src="${src}" class="h-10 w-10 object-cover rounded-lg border border-slate-200" onerror="this.replaceWith(document.createTextNode('(missing)'))"></a>`;
+            }
+            if (col === 'portfolio_url') {
+                return `<a href="${esc(imgSrc(value))}" target="_blank" rel="noopener" class="text-rose-600 underline">view</a>`;
+            }
+            const text = String(value);
+            const short = text.length > 60 ? text.slice(0, 60) + '…' : text;
+            return `<span title="${esc(text)}">${esc(short)}</span>`;
+        }
+
+        function actions(table, row) {
+            const id = Number(row.id);
+            const del = `<button type="button" data-del="${id}" class="text-rose-600 font-bold hover:underline">Delete</button>`;
+
+            if (table === 'users') {
+                if (row.role === 'admin') return '<span class="text-xs text-slate-400">protected</span>';
+                const roles = ['buyer', 'seller'].map(r => `<option ${r === row.role ? 'selected' : ''}>${r}</option>`).join('');
+                const sts = ['approved', 'pending', 'rejected'].map(s => `<option ${s === row.status ? 'selected' : ''}>${s}</option>`).join('');
+                return `<div class="flex items-center gap-2">
+                    <select data-user-role="${id}" class="border border-slate-300 rounded-lg px-2 py-1 text-xs">${roles}</select>
+                    <select data-user-status="${id}" class="border border-slate-300 rounded-lg px-2 py-1 text-xs">${sts}</select>
+                    ${del}</div>`;
+            }
+            if (table === 'orders') {
+                const sts = ORDER_STATUSES.map(s => `<option ${s === row.status ? 'selected' : ''}>${s}</option>`).join('');
+                return `<select data-order-status="${id}" class="border border-slate-300 rounded-lg px-2 py-1 text-xs">${sts}</select>`;
+            }
+            if (state.data && state.data.deletable) return del;
+            return '';
+        }
+
+        function renderTable(d) {
+            const m = META[d.table] || { icon: '🗂️', label: d.table };
+            document.getElementById('table-title').textContent = `${m.icon} ${m.label} (${d.total})`;
+
+            const exp = document.getElementById('export-link');
+            exp.href = '/api/admin/db/export/' + encodeURIComponent(d.table);
+            exp.classList.remove('hidden');
+
+            const hasActions = d.deletable || d.table === 'orders';
+
+            document.getElementById('thead').innerHTML = '<tr>' + d.columns.map(c => {
+                const arrow = c === d.sort ? (d.dir === 'asc' ? ' ▲' : ' ▼') : '';
+                return `<th data-sort="${esc(c)}" class="px-4 py-3 text-left font-bold cursor-pointer select-none whitespace-nowrap hover:text-slate-900">${esc(c)}${arrow}</th>`;
+            }).join('') + (hasActions ? '<th class="px-4 py-3 text-left font-bold">Actions</th>' : '') + '</tr>';
+
+            document.getElementById('tbody').innerHTML = d.rows.length
+                ? d.rows.map(r => '<tr class="hover:bg-slate-50">' +
+                    d.columns.map(c => `<td class="px-4 py-2.5 align-middle">${cell(c, r[c])}</td>`).join('') +
+                    (hasActions ? `<td class="px-4 py-2.5 whitespace-nowrap">${actions(d.table, r)}</td>` : '') +
+                    '</tr>').join('')
+                : `<tr><td colspan="${d.columns.length + 1}" class="px-4 py-10 text-center text-slate-400">No rows${state.q ? ' match your search' : ' yet'}.</td></tr>`;
+
+            const pages = Math.max(1, Math.ceil(d.total / d.limit));
+            const from = d.total ? (d.page - 1) * d.limit + 1 : 0;
+            const to = Math.min(d.total, d.page * d.limit);
+            document.getElementById('range-info').textContent = `Showing ${from}–${to} of ${d.total}`;
+            document.getElementById('page-info').textContent = `Page ${d.page} / ${pages}`;
+            document.getElementById('prev-btn').disabled = d.page <= 1;
+            document.getElementById('next-btn').disabled = d.page >= pages;
+        }
+
+        document.getElementById('thead').addEventListener('click', e => {
+            const th = e.target.closest('th[data-sort]');
+            if (!th) return;
+            const col = th.dataset.sort;
+            state.dir = (state.sort === col && state.dir === 'desc') ? 'asc' : 'desc';
+            state.sort = col; state.page = 1;
+            loadTable();
+        });
+
+        document.getElementById('prev-btn').onclick = () => { if (state.page > 1) { state.page--; loadTable(); } };
+        document.getElementById('next-btn').onclick = () => { state.page++; loadTable(); };
+        document.getElementById('page-size').onchange = e => { state.limit = Number(e.target.value); state.page = 1; loadTable(); };
+
+        let searchTimer = null;
+        document.getElementById('search').addEventListener('input', e => {
+            clearTimeout(searchTimer);
+            searchTimer = setTimeout(() => { state.q = e.target.value.trim(); state.page = 1; loadTable(); }, 300);
+        });
+
+        /* ---------- row actions ---------- */
+        async function refreshAll() {
+            await Promise.all([loadOverview(), loadTable()]);
+        }
+
+        document.getElementById('tbody').addEventListener('click', async e => {
+            const btn = e.target.closest('button[data-del]');
+            if (!btn) return;
+            if (!confirm('Delete this row permanently? This cannot be undone.')) return;
+            try {
+                await api(`/api/admin/db/row/${encodeURIComponent(state.table)}/${btn.dataset.del}`, { method: 'DELETE' });
+                await refreshAll();
+            } catch (err) { alert(err.message); }
+        });
+
+        document.getElementById('tbody').addEventListener('change', async e => {
+            const t = e.target;
+            try {
+                if (t.dataset.userRole) {
+                    await api('/api/admin/users/' + t.dataset.userRole, {
+                        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ role: t.value })
+                    });
+                } else if (t.dataset.userStatus) {
+                    await api('/api/admin/users/' + t.dataset.userStatus, {
+                        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ status: t.value })
+                    });
+                } else if (t.dataset.orderStatus) {
+                    await api(`/api/orders/${t.dataset.orderStatus}/status`, {
+                        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ status: t.value })
+                    });
+                } else { return; }
+                await loadTable();
+            } catch (err) { alert(err.message); await loadTable(); }
+        });
+
+        document.getElementById('refresh-btn').onclick = () => refreshAll().catch(err => alert(err.message));
+
+        document.getElementById('logout-btn').addEventListener('click', async () => {
+            await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' });
+            location.href = 'index.html';
+        });
+
+        /* ---------- start ---------- */
+        (async function init() {
+            try {
+                const s = await api('/api/session');
+                if (!s.loggedIn || s.role !== 'admin') { location.href = 'login.html?next=admin.html'; return; }
+                await loadOverview();
+                openTable('users');
+            } catch (err) {
+                document.getElementById('table-title').textContent = 'Could not load the database';
+                document.getElementById('tbody').innerHTML = `<tr><td class="p-6 text-rose-600">${esc(err.message)}</td></tr>`;
+            }
+        })();
+    </script>
+</body>
+</html>

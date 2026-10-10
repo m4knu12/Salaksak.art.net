@@ -54,7 +54,6 @@ function deleteUploadedFiles(req) {
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname, "public")));
 app.use("/uploads", express.static(uploadDir));
 
 // Behind Nginx / a host's HTTPS proxy: needed for secure cookies to work.
@@ -71,6 +70,18 @@ app.use(session({
         maxAge: 1000 * 60 * 60 * 24 * 7   // stay signed in for 7 days
     }
 }));
+
+// The database page is only served to signed-in admins.
+app.get("/admin.html", (req, res, next) => {
+    loadUser(req, res, () => {
+        if (!req.user || req.user.role !== "admin") {
+            return res.redirect("/login.html?next=admin.html");
+        }
+        next();
+    });
+});
+
+app.use(express.static(path.join(__dirname, "public")));
 
 const db = new sqlite3.Database(path.join(DATA_DIR, "database.sqlite"), err => {
     if (err) console.error("Database connection error:", err.message);
@@ -312,6 +323,18 @@ function requireCreator(req, res, next) {
                 success: false,
                 error: "Seller access required."
             });
+        }
+        next();
+    });
+}
+
+function requireAdmin(req, res, next) {
+    loadUser(req, res, () => {
+        if (!req.user) {
+            return res.status(401).json({ success: false, error: "Please sign in first." });
+        }
+        if (req.user.role !== "admin") {
+            return res.status(403).json({ success: false, error: "Admin access required." });
         }
         next();
     });
@@ -1413,6 +1436,223 @@ app.post("/api/notifications/read", requireLogin, async (req, res) => {
             success: false,
             error: "Could not update notifications."
         });
+    }
+});
+
+/* ADMIN DATABASE VIEWER */
+
+const DB_TABLES = ["users", "artworks", "orders", "order_items", "cart_items", "messages", "notifications"];
+const HIDDEN_COLUMNS = { users: ["password"] };       // never sent to the browser
+const DELETABLE_TABLES = ["users", "artworks", "cart_items", "messages", "notifications"];
+
+async function visibleColumns(table) {
+    const info = await all(`PRAGMA table_info("${table}")`);
+    const hidden = HIDDEN_COLUMNS[table] || [];
+    return info.map(c => c.name).filter(n => !hidden.includes(n));
+}
+
+function csvCell(value) {
+    if (value === null || value === undefined) return "";
+    let text = String(value);
+    if (/^[=+\-@\t\r]/.test(text)) text = "'" + text;   // stop spreadsheet formula injection
+    return /[",\n\r]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+}
+
+app.get("/api/admin/db/overview", requireAdmin, async (req, res) => {
+    try {
+        const tables = [];
+        for (const name of DB_TABLES) {
+            const row = await get(`SELECT COUNT(*) AS c FROM "${name}"`);
+            tables.push({ name, count: Number(row.c || 0) });
+        }
+
+        let dbSize = 0;
+        try { dbSize = fs.statSync(path.join(DATA_DIR, "database.sqlite")).size; } catch (e) {}
+
+        res.json({ tables, dbSize, dataDir: DATA_DIR, production: IS_PROD });
+    } catch (err) {
+        console.error("DB OVERVIEW ERROR:", err);
+        res.status(500).json({ error: "Could not read the database." });
+    }
+});
+
+app.get("/api/admin/db/table/:name", requireAdmin, async (req, res) => {
+    try {
+        const table = req.params.name;
+        if (!DB_TABLES.includes(table)) return res.status(404).json({ error: "Unknown table." });
+
+        const columns = await visibleColumns(table);
+        const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+        const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 25));
+        const q = String(req.query.q || "").trim();
+
+        let where = "";
+        const params = [];
+        if (q) {
+            where = "WHERE " + columns.map(c => `CAST("${c}" AS TEXT) LIKE ?`).join(" OR ");
+            columns.forEach(() => params.push(`%${q}%`));
+        }
+
+        const sort = columns.includes(req.query.sort)
+            ? req.query.sort
+            : (columns.includes("id") ? "id" : columns[0]);
+        const dir = req.query.dir === "asc" ? "ASC" : "DESC";
+
+        const totalRow = await get(`SELECT COUNT(*) AS c FROM "${table}" ${where}`, params);
+        const rows = await all(
+            `SELECT ${columns.map(c => `"${c}"`).join(",")} FROM "${table}" ${where}
+             ORDER BY "${sort}" ${dir} LIMIT ? OFFSET ?`,
+            [...params, limit, (page - 1) * limit]
+        );
+
+        res.json({
+            table, columns, rows,
+            total: Number(totalRow.c || 0),
+            page, limit, sort, dir: dir.toLowerCase(),
+            deletable: DELETABLE_TABLES.includes(table)
+        });
+    } catch (err) {
+        console.error("DB TABLE ERROR:", err);
+        res.status(500).json({ error: "Could not read this table." });
+    }
+});
+
+app.get("/api/admin/db/export/:name", requireAdmin, async (req, res) => {
+    try {
+        const table = req.params.name;
+        if (!DB_TABLES.includes(table)) return res.status(404).json({ error: "Unknown table." });
+
+        const columns = await visibleColumns(table);
+        const rows = await all(
+            `SELECT ${columns.map(c => `"${c}"`).join(",")} FROM "${table}" ORDER BY 1 DESC LIMIT 50000`
+        );
+
+        const lines = [columns.map(csvCell).join(",")];
+        for (const r of rows) lines.push(columns.map(c => csvCell(r[c])).join(","));
+
+        res.setHeader("Content-Type", "text/csv; charset=utf-8");
+        res.setHeader("Content-Disposition", `attachment; filename="${table}.csv"`);
+        res.send("\uFEFF" + lines.join("\r\n"));
+    } catch (err) {
+        console.error("DB EXPORT ERROR:", err);
+        res.status(500).json({ error: "Export failed." });
+    }
+});
+
+// Download a consistent copy of the whole database file (contains password hashes: keep it private).
+app.get("/api/admin/db/backup", requireAdmin, async (req, res) => {
+    const tmp = path.join(DATA_DIR, `backup-${Date.now()}.sqlite`);
+    try {
+        try {
+            await withLock(() => run(`VACUUM INTO ?`, [tmp]));
+        } catch (e) {
+            // Older SQLite without VACUUM INTO: fall back to a plain file copy.
+            await fs.promises.copyFile(path.join(DATA_DIR, "database.sqlite"), tmp);
+        }
+
+        const stamp = new Date().toISOString().slice(0, 10);
+        res.download(tmp, `salaksak-backup-${stamp}.sqlite`, () => fs.unlink(tmp, () => {}));
+    } catch (err) {
+        console.error("DB BACKUP ERROR:", err);
+        fs.unlink(tmp, () => {});
+        res.status(500).json({ error: "Backup failed." });
+    }
+});
+
+app.delete("/api/admin/db/row/:table/:id", requireAdmin, async (req, res) => {
+    try {
+        const table = req.params.table;
+        const id = Number(req.params.id);
+
+        if (!DELETABLE_TABLES.includes(table)) {
+            return res.status(400).json({ success: false, error: "Rows in this table cannot be deleted here." });
+        }
+        if (!validId(id)) return res.status(400).json({ success: false, error: "Invalid ID." });
+
+        if (table === "users") {
+            if (id === req.user.id) {
+                return res.status(400).json({ success: false, error: "You cannot delete your own account." });
+            }
+            const target = await get(`SELECT id,role FROM users WHERE id=?`, [id]);
+            if (!target) return res.status(404).json({ success: false, error: "User not found." });
+            if (target.role === "admin") {
+                return res.status(400).json({ success: false, error: "Admin accounts cannot be deleted." });
+            }
+
+            const art = await get(`SELECT COUNT(*) AS c FROM artworks WHERE user_id=?`, [id]);
+            const ord = await get(`SELECT COUNT(*) AS c FROM orders WHERE buyer_id=?`, [id]);
+            if (Number(art.c) > 0 || Number(ord.c) > 0) {
+                return res.status(400).json({
+                    success: false,
+                    error: "This user still has artworks or orders. Delete their artworks first; orders are kept as records."
+                });
+            }
+
+            await withLock(async () => {
+                await run(`DELETE FROM cart_items WHERE user_id=?`, [id]);
+                await run(`DELETE FROM messages WHERE sender_id=? OR receiver_id=?`, [id, id]);
+                await run(`DELETE FROM notifications WHERE user_id=?`, [id]);
+                await run(`DELETE FROM users WHERE id=?`, [id]);
+            });
+            return res.json({ success: true });
+        }
+
+        if (table === "artworks") {
+            const old = await get(`SELECT image_url FROM artworks WHERE id=?`, [id]);
+            if (!old) return res.status(404).json({ success: false, error: "Artwork not found." });
+
+            await run(`DELETE FROM cart_items WHERE artwork_id=?`, [id]);
+            await run(`DELETE FROM artworks WHERE id=?`, [id]);
+
+            if (old.image_url && old.image_url.startsWith("/uploads/")) {
+                const file = path.join(uploadDir, path.basename(old.image_url));
+                if (fs.existsSync(file)) fs.unlink(file, () => {});
+            }
+            return res.json({ success: true });
+        }
+
+        await run(`DELETE FROM "${table}" WHERE id=?`, [id]);
+        res.json({ success: true });
+    } catch (err) {
+        console.error("DB DELETE ERROR:", err);
+        res.status(500).json({ success: false, error: "Could not delete this row." });
+    }
+});
+
+app.patch("/api/admin/users/:id", requireAdmin, async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        if (!validId(id)) return res.status(400).json({ success: false, error: "Invalid user ID." });
+
+        const target = await get(`SELECT id,role,email FROM users WHERE id=?`, [id]);
+        if (!target) return res.status(404).json({ success: false, error: "User not found." });
+        if (target.role === "admin" || target.email === ADMIN_EMAIL) {
+            return res.status(400).json({ success: false, error: "Admin accounts cannot be changed here." });
+        }
+
+        const role = req.body.role === undefined ? target.role : String(req.body.role);
+        let status = req.body.status;
+
+        if (!["buyer", "seller"].includes(role)) {
+            return res.status(400).json({ success: false, error: "Role must be buyer or seller." });
+        }
+        if (status !== undefined && !["approved", "pending", "rejected"].includes(status)) {
+            return res.status(400).json({ success: false, error: "Invalid status." });
+        }
+
+        if (status === undefined) {
+            const current = await get(`SELECT status FROM users WHERE id=?`, [id]);
+            status = role === "seller" ? "approved" : current.status;
+        }
+
+        await run(
+            `UPDATE users SET role=?, status=?, has_seen_approval=0 WHERE id=?`,
+            [role, status, id]
+        );
+        res.json({ success: true });
+    } catch (err) {
+        console.error("ADMIN USER UPDATE ERROR:", err);
+        res.status(500).json({ success: false, error: "Could not update user." });
     }
 });
 

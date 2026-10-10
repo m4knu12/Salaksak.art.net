@@ -110,7 +110,7 @@
 
         function go(redirect) {
             // Admins/sellers/pending users go where the server says; buyers can go back to "next".
-            if (redirect === 'index.html' && safeNext) location.href = safeNext;
+            if ((redirect === 'index.html' || redirect === 'dashboard.html') && safeNext) location.href = safeNext;
             else location.href = redirect || 'index.html';
         }
 
